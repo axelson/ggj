@@ -13,19 +13,19 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
      */
     init: function () {
         // You must always call the super class version of init
-        SnakeChase.superclass.init.call(this)
+        SnakeChase.superclass.init.call(this);
 
         // Get size of canvas
-        var s = cocos.Director.get('sharedDirector.winSize')
-
-        // Create label
-        var label = cocos.nodes.Label.create({ string: 'Snake Chase', fontName: 'Arial', fontSize: 76 })
-
-        // Add label to layer
-        this.addChild({ child: label, z:1 })
-
-        // Position the label in the centre of the view
-        label.set('position', ccp(s.width / 2, s.height / 2))
+        // var s = cocos.Director.get('sharedDirector.winSize')
+        // 
+        // // Create label
+        // var label = cocos.nodes.Label.create({ string: 'Snake Chase', fontName: 'Arial', fontSize: 76 })
+        // 
+        // // Add label to layer
+        // this.addChild({ child: label, z:1 })
+        // 
+        // // Position the label in the centre of the view
+        // label.set('position', ccp(s.width / 2, s.height / 2))
     }
 })
 
