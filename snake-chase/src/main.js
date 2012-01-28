@@ -6,7 +6,7 @@ var cocos  = require('cocos2d')   // Import the cocos2d module
   , ccp    = geo.ccp              // Short hand to create points
   , Player   = require('./Player').Player
   , Snake   = require('./Snake').Snake;
-  
+
 var KEYS = {
     left: 37,
     up: 38,
