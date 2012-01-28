@@ -5,7 +5,14 @@ var cocos  = require('cocos2d')   // Import the cocos2d module
   , geo    = require('geometry')  // Import the geometry module
   , ccp    = geo.ccp              // Short hand to create points
   , Player   = require('./Player').Player
-  , Snake   = require('./Snake').Snake
+  , Snake   = require('./Snake').Snake;
+  
+var KEYS = {
+    left: 37,
+    up: 38,
+    right: 39,
+    down: 40
+};
 
 var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     /**
@@ -17,6 +24,7 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         // You must always call the super class version of init
         SnakeChase.superclass.init.call(this);
 
+        this.set('isKeyboardEnabled', true);
         // Get size of canvas
         // var s = cocos.Director.get('sharedDirector.winSize')
         // 
@@ -37,6 +45,28 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         snake.set('position', new geo.Point(280, 250));
         this.addChild({child: snake});
         this.set('snake', snake);
+    },
+
+    keyDown: function(event) {
+        // var keys = [];
+        // for(var key in event) {
+        //     keys.push(key);
+        // }
+        //
+        // console.log(keys);
+        // left: 37 right: 39 up: 38 down: 40
+        if (event.keyCode == KEYS.left) {
+            alert('left');
+        }
+        else if (event.keyCode == KEYS.up) {
+            alert('up');
+        }
+        else if (event.keyCode == KEYS.right) {
+            alert('right');
+        }
+        else if (event.keyCode == KEYS.down) {
+            alert('down');
+        }
     }
 })
 
