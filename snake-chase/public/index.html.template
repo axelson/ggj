@@ -1,10 +1,10 @@
-<!doctype html>
-<html>
-    <head>
-        <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-        <title>Snake Chase</title>
-        <link rel="shortcut icon" href="__jah__/resources/snake.png" />
-        <style type="text/css" media="screen">
+<!doctype html> 
+<html> 
+    <head> 
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"> 
+        <title>Snake Chase</title> 
+        <script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.7.1/jquery.min.js"></script>
+        <style type="text/css" media="screen"> 
             body {
                 font-family: Helvetica, Arial, sans-serif;
                 font-size: 10pt;
@@ -26,9 +26,10 @@
             }
         </style>
         ${scripts}
-    </head>
-    <body>
-        <h1>Snake Chase</h1>
+    </head> 
+    <body> 
+        <h1>Snake Chase</h1> 
+        <h3>Deaths: <span id='death-count'>0</span></h3>
        <div id="snake_chase_app">Snake Chase is loading...</div>
     </body>
 </html>

@@ -44,10 +44,23 @@ var Player = cocos.nodes.Node.extend({
 
         this.set('position', pos);
         this.testBounds();
+        this.testDeathConditions();
         },
 
-        testBounds: function() {
+        testDeathConditions: function() {
             var vel = util.copy(this.get('velocity')),
+                    playerBox = this.get('boundingBox'),
+                    snakeBox = this.get('parent').get('snake').get('boundingBox');
+
+            if (geom.rectOverlapsRect(snakeBox, playerBox)) {
+                        var deaths = parseInt($('#death-count').html());
+                        $('#death-count').html(deaths + 1);
+                        alert("you lose");
+                }
+	},
+	
+	testBounds: function() {
+	    var vel = util.copy(this.get('velocity')),
             box = this.get('boundingBox'),
             winSize = cocos.Director.get('sharedDirector').get('winSize');
 
