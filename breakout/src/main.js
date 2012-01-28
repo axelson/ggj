@@ -1,27 +1,24 @@
 // Import the cocos2d module
 var cocos = require('cocos2d'),
-// Import the geometry module
+    // Import the geometry module
     geo = require('geometry');
 
-// Create a new layer
-var Breakout = cocos.nodes.Layer.extend({
-    init: function() {
-        // You must always call the super class version of init
-        Breakout.superclass.init.call(this);
+    var Bat = require('Bat').Bat;
 
-        // Get size of canvas
-        var s = cocos.Director.get('sharedDirector').get('winSize');
+    // Create a new layer
+    var Breakout = cocos.nodes.Layer.extend({
+        bat: null,
 
-        // Create label
-        var label = cocos.nodes.Label.create({string: 'Breakout', fontName: 'Arial', fontSize: 76});
+        init: function() {
+            // You must always call the super class version of init
+            Breakout.superclass.init.call(this);
 
-        // Add label to layer
-        this.addChild({child: label, z:1});
-
-        // Position the label in the centre of the view
-        label.set('position', geo.ccp(s.width / 2, s.height / 2));
-    }
-});
+            var bat = Bat.create();
+            bat.set('position', new geo.Point(160, 280));
+            this.addChild({child: bat});
+            this.set('bat', bat);
+        }
+    });
 
 exports.main = function() {
     // Initialise application
