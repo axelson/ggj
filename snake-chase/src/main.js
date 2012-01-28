@@ -6,8 +6,6 @@ var cocos  = require('cocos2d')   // Import the cocos2d module
   , ccp    = geo.ccp              // Short hand to create points
   , Player   = require('./Player').Player
   , Snake   = require('./Snake').Snake;
-  
-var PLAYER_SPEED = 10;
 
 var KEYS = {
     left: 37,
@@ -25,7 +23,7 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     init: function () {
         // You must always call the super class version of init
         SnakeChase.superclass.init.call(this);
-
+        
         this.set('isKeyboardEnabled', true);
         // Get size of canvas
         // var s = cocos.Director.get('sharedDirector.winSize')
@@ -65,7 +63,6 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         }
         else if (event.keyCode == KEYS.down) {
             player.setVelocity(new geo.Point(0, 1));
-        }
     }
 })
 
