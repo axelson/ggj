@@ -1,0 +1,6 @@
+{
+    "output": "breakout.js",
+    "paths": {
+        "src" : "/"
+    }
+}
