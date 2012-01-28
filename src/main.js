@@ -3,9 +3,9 @@
 var cocos  = require('cocos2d')   // Import the cocos2d module
   , events = require('events')    // Import the events module
   , geo    = require('geometry')  // Import the geometry module
-  , ccp    = geo.ccp              // Short hand to create points
-
-var Bat = require('./Bat').Bat;
+  , ccp    = geo.ccp
+  , Bat    = require('./Bat').Bat
+  , Ball   = require('./Ball').Ball;
 
 var Gamejam = cocos.nodes.Layer.extend(/** @lends Gamejam# */{
     /**
@@ -14,15 +14,31 @@ var Gamejam = cocos.nodes.Layer.extend(/** @lends Gamejam# */{
      * @constructs
      */
 		bat: null,
+		ball: null,
     init: function () {
         // You must always call the super class version of init
         Gamejam.superclass.init.call(this);
-
+				
+				this.set('isMouseEnabled', true);
+				
 				var bat = Bat.create();
 				bat.set('position', new geo.Point(160, 280));
 				this.addChild({child: bat});
 				this.set('bat', bat);
-    }
+				
+				var ball = Ball.create();
+				ball.set('position', new geo.Point(160, 250));
+				this.addChild({child: ball});
+				this.set('ball', ball);
+    },
+
+		mouseMoved: function(event) {
+			var bat = this.get('bat');
+			
+			var batPos = bat.get('position');
+			batPos.x = event.locationInCanvas.x;
+			bat.set('position', batPos);
+		}
 })
 
 /**
