@@ -3,12 +3,11 @@
 var cocos  = require('cocos2d')   // Import the cocos2d module
   , events = require('events')    // Import the events module
   , geo    = require('geometry')  // Import the geometry module
-<<<<<<< HEAD
   , ccp    = geo.ccp              // Short hand to create points
   , Player   = require('./Player').Player
-  , Snake   = require('./Snake').Snake
-=======
-  , ccp    = geo.ccp;            // Short hand to create points
+  , Snake   = require('./Snake').Snake;
+  
+var PLAYER_SPEED = 10;
 
 var KEYS = {
     left: 37,
@@ -16,7 +15,6 @@ var KEYS = {
     right: 39,
     down: 40
 };
->>>>>>> Implemented keybindings.
 
 var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     /**
@@ -50,21 +48,23 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         this.addChild({child: snake});
         this.set('snake', snake);
     },
-
+	
     keyDown: function(event) {
         // console.log(event.keyCode);
+        var player = this.get('player');
+        var pos = player.get('position');
         
         if (event.keyCode == KEYS.left) {
-            alert('left');
+            player.setVelocity(new geo.Point(-1, 0));
         }
         else if (event.keyCode == KEYS.up) {
-            alert('up');
+            player.setVelocity(new geo.Point(0, -1));
         }
         else if (event.keyCode == KEYS.right) {
-            alert('right');
+            player.setVelocity(new geo.Point(1, 0));
         }
         else if (event.keyCode == KEYS.down) {
-            alert('down');
+            player.setVelocity(new geo.Point(0, 1));
         }
     }
 })
