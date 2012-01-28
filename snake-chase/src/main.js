@@ -13,7 +13,7 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
      */
     init: function () {
         // You must always call the super class version of init
-        Snake-chase.superclass.init.call(this)
+        SnakeChase.superclass.init.call(this)
 
         // Get size of canvas
         var s = cocos.Director.get('sharedDirector.winSize')
@@ -47,7 +47,7 @@ exports.main = function () {
         var scene = cocos.nodes.Scene.create()
 
         // Add our layer to the scene
-        scene.addChild({ child: Snake-chase.create() })
+        scene.addChild({ child: SnakeChase.create() })
 
         // Run the scene
         director.replaceScene(scene)
