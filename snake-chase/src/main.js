@@ -6,6 +6,11 @@ var cocos  = require('cocos2d')   // Import the cocos2d module
   , ccp    = geo.ccp              // Short hand to create points
   , Player   = require('./Player').Player
   , Snake   = require('./Snake').Snake;
+<<<<<<< HEAD
+=======
+
+var PLAYER_SPEED = 10;
+>>>>>>> Prevented player from reversing direction. Bounded player within the window.
 
 var KEYS = {
     left: 37,
@@ -49,18 +54,20 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
 
     keyDown: function(event) {
         // console.log(event.keyCode);
-
+        var player = this.get('player');
+        var pos = player.get('position');
+        
         if (event.keyCode == KEYS.left) {
-            alert('left');
+            player.setVelocity(new geo.Point(-1, 0));
         }
         else if (event.keyCode == KEYS.up) {
-            alert('up');
+            player.setVelocity(new geo.Point(0, -1));
         }
         else if (event.keyCode == KEYS.right) {
-            alert('right');
+            player.setVelocity(new geo.Point(1, 0));
         }
         else if (event.keyCode == KEYS.down) {
-            alert('down');
+            player.setVelocity(new geo.Point(0, 1));
         }
     }
 })
