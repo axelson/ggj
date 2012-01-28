@@ -52,13 +52,8 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     },
 
     keyDown: function(event) {
-        // var keys = [];
-        // for(var key in event) {
-        //     keys.push(key);
-        // }
-        //
-        // console.log(keys);
-        // left: 37 right: 39 up: 38 down: 40
+        // console.log(event.keyCode);
+        
         if (event.keyCode == KEYS.left) {
             alert('left');
         }
