@@ -20,6 +20,8 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
      * @extends cocos.nodes.Layer
      * @constructs
      */
+    player: null,
+    snake: null,
     init: function () {
         // You must always call the super class version of init
         SnakeChase.superclass.init.call(this);
@@ -63,8 +65,9 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         }
         else if (event.keyCode == KEYS.down) {
             player.setVelocity(new geo.Point(0, 1));
+        }
     }
-})
+});
 
 /**
  * Entry point for the application
