@@ -17,6 +17,16 @@ var cocos = require('cocos2d'),
             bat.set('position', new geo.Point(160, 280));
             this.addChild({child: bat});
             this.set('bat', bat);
+
+            this.set('isMouseEnabled', true);
+        },
+
+        mouseMoved: function(evt) {
+            var bat = this.get('bat');
+
+            var batPos = bat.get('position');
+            batPos.x = evt.locationInCanvas.x;
+            bat.set('position', batPos);
         }
     });
 
