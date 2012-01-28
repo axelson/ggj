@@ -1,5 +1,6 @@
 var cocos = require('cocos2d');
 var geom = require('geometry');
+var doublyLinkedList = require('./DoublyLinkedList');
 
 var Snake = cocos.nodes.Node.extend({
     init: function() {
@@ -20,6 +21,14 @@ var Snake = cocos.nodes.Node.extend({
         this.addChild({child: spriteHead});
         this.set('contentSize', sprite.get('contentSize'));
         this.set('contentSize', spriteHead.get('contentSize'));
+
+        var test = doublyLinkedList;
+        var test2 = new test.DoublyLinkedList();
+        test2.add("Hi");
+        console.log("added new stuff");
+        console.log(test2);
+        console.log(test2.toString());
+        console.log("added new stuff2");
     }
 });
 

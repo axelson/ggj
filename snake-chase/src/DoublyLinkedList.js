@@ -212,3 +212,6 @@ DoublyLinkedList.prototype = {
         return this.toArray().toString();
     }    
 };
+
+
+exports.DoublyLinkedList = DoublyLinkedList;
