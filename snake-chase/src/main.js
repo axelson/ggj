@@ -4,7 +4,8 @@ var cocos  = require('cocos2d')   // Import the cocos2d module
   , events = require('events')    // Import the events module
   , geo    = require('geometry')  // Import the geometry module
   , ccp    = geo.ccp              // Short hand to create points
-  , Player   = require('./Player').Player;
+  , Player   = require('./Player').Player
+  , Snake   = require('./Snake').Snake
 
 var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     /**
@@ -32,6 +33,10 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         this.addChild({child: player});
         this.set('player', player);
 
+        var snake = Snake.create();
+        snake.set('position', new geo.Point(280, 250));
+        this.addChild({child: snake});
+        this.set('snake', snake);
     }
 })
 
