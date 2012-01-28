@@ -3,4 +3,4 @@ must escape his cycle of death by tricking the snake into eating itself.
 
 We plan to use [Cocos2D-javascript](http://cocos2d-javascript.org/) as the HTML5 game engine.
 
-The main developers are @axelson, @keokilee, and @yongwen
+The main developers are [@axelson](https://github.com/axelson), [@keokilee](https://github.com/keokilee), and [@yongwen](https://github.com/yongwen)
