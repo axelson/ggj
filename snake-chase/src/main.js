@@ -5,7 +5,7 @@ var cocos  = require('cocos2d')   // Import the cocos2d module
   , geo    = require('geometry')  // Import the geometry module
   , ccp    = geo.ccp              // Short hand to create points
 
-var Snake-chase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
+var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     /**
      * @class Initial application layer
      * @extends cocos.nodes.Layer
