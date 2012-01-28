@@ -7,7 +7,7 @@ var Ball = cocos.nodes.Node.extend({
 
         var sprite = cocos.nodes.Sprite.create({
             file: '/resources/sprites.png',
-            rect: new geom.Rect(64, 0, 16, 16)
+            rect: new geom.Rect(80, 0, 16, 16)
         });
 
         sprite.set('anchorPoint', new geom.Point(0, 0));
