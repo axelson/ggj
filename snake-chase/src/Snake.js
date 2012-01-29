@@ -4,7 +4,7 @@ var util = require('util');
 var doublyLinkedList = require('./DoublyLinkedList');
 
 var Snake = cocos.nodes.Node.extend({
-    initialVelocity: new geom.Point(1, 0),
+    initialVelocity: new geom.Point(-1, 0),
     speed: 60,
     body: null,
     moves: null,
@@ -17,28 +17,47 @@ var Snake = cocos.nodes.Node.extend({
         Snake.superclass.init.call(this);
 
         var moves = new doublyLinkedList.DoublyLinkedList()
+        //moves.add({
+        //    x: -48,
+        //    y: 0,
+        //    vX: 0,
+        //    vY: +1
+        //});
+
         moves.add({
             x: -48,
             y: 0,
             vX: 0,
-            vY: 1
+            vY: -1
         });
         moves.add({
             x: -48,
             y: -150,
-            vX: -1,
+            vX: +1,
             vY: 0
         });
         moves.add({
             x: -10,
             y: -150,
             vX: 0,
-            vY: -1
+            vY: +1
         });
         moves.add({
             x: -10,
             y: -30,
-            vX: 1,
+            vX: -1,
+            vY: 0
+        });
+        moves.add({
+            x: -40,
+            y: -30,
+            vX: 0,
+            vY: +1
+        });
+        moves.add({
+            x: -40,
+            y: 30,
+            vX: +1,
             vY: 0
         });
         this.set('moves', moves);
@@ -49,7 +68,7 @@ var Snake = cocos.nodes.Node.extend({
             rect: new geom.Rect(96, 0, 16, 16)
         });
         sprite2.set('position', new geom.Point(0, 0));
-        sprite2.set('velocity', new geom.Point(1, 0));
+        sprite2.set('velocity', util.copy(this.get('initialVelocity')));
         body.add(sprite2);
         this.addChild({child: body.item(0)});
 
@@ -96,8 +115,8 @@ var Snake = cocos.nodes.Node.extend({
 
             // Calculate the position if keep moving forward
             var speed = util.copy(this.get('speed'));
-            var dX = dt * -vel.x*speed;
-            var dY = dt * -vel.y*speed;
+            var dX = dt * vel.x*speed;
+            var dY = dt * vel.y*speed;
             var newX = pos.x + dX;
             var newY = pos.y + dY;
             //console.log(pos.x + " " + pos.y);
@@ -110,16 +129,31 @@ var Snake = cocos.nodes.Node.extend({
                     // Set new velocity
                     body.item(i).set('velocity', new geom.Point(move.vX,move.vY));
 
-                    // Give leftover velocity to the correct place
+                    //var xDir = (dX*move.x/this.get('speed'))
+                    //var yDir = (dY*move.y/this.get('speed'))
+                    var xDir = Math.abs(move.vX);
+                    var yDir = Math.abs(move.vY);
                     if(i == 0) {
+                        // Give leftover velocity to the correct place
                         dX += dY - Math.abs(pos.y - move.y);
-                        newX = move.x + (dX*move.x/this.get('speed'));
+                        //newX = move.x + (dX*move.x/this.get('speed'));
+                        newX = move.x + (dX*xDir);
 
                         dY += dX - Math.abs(pos.x - move.x);
-                        newY = move.y + (dY*move.y/this.get('speed'));
+                        //newY = move.y + (dY*move.y/this.get('speed'));
+                        newY = move.y + (dY*yDir);
                     } else {
+                        // Set variable being changed to be directly in line
+                        // and other one directly behind previous segment
                         var prevPos = body.item(i - 1).get('position');
+                        console.log("moving y: " + move.vY*(prevPos.y - 16*move.vY));
+                        console.log("vX: " + move.vX + " vY: " + move.vY + " prevPos.y: " + prevPos.y);
+                        newY = xDir*move.y + yDir*(prevPos.y - 16*move.vY);
+                        newX = yDir*move.x + xDir*(prevPos.x - 16*move.vX);
+                        //newY = move.y + move.vY*(prevPos.y - 16*move.vY);
+                        //newX = move.x + move.vX*(prevPos.x - 16*move.vX);
                     }
+                    /*
                     if(move.vX != 0) {
                         dX += dY - Math.abs(pos.y - move.y);
                         if(i != 0) {
@@ -144,6 +178,7 @@ var Snake = cocos.nodes.Node.extend({
                     } else {
                         console.log("Not handled");
                     }
+                    */
 
                     // Calculate new position instead of moving forward
                     //newY = pos.y + dY;
