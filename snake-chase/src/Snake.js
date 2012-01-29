@@ -7,6 +7,7 @@ var Snake = cocos.nodes.Node.extend({
     velocity: null,
     body: null,
     head: null,
+    startTime: null,
 
     init: function() {
         Snake.superclass.init.call(this);
@@ -63,6 +64,10 @@ var Snake = cocos.nodes.Node.extend({
 
 
         this.set('body', body);
+
+        var d = new Date();
+        d.getTime();
+        this.set('startTime', d);
     },
 
     update: function(dt) {
@@ -78,6 +83,15 @@ var Snake = cocos.nodes.Node.extend({
         var test3 = this.get('anchorPoint');
         //console.log("getting" + test3);
 
+        //var d = new Date();
+        //var curTime = d.getTime();
+        //if(this.get('startTime') > curTime + 20) {
+        //    posTest2.x += dt * vel.x;
+        //    posTest2.y += dt * vel.y;
+        //} else {
+        //    posTest2.x += dt * -vel.x;
+        //    posTest2.y += dt * -vel.y;
+        //}
         posTest2.x += dt * -vel.x;
         posTest2.y += dt * -vel.y;
         posTest3.x += dt * -vel.x;
