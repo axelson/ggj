@@ -34,6 +34,7 @@ var Player = cocos.nodes.Node.extend({
     dying: false,
     deathFrames: null,
     sprite: null,
+    flipped: false,
     
     init: function() {
         Player.superclass.init.call(this);
@@ -82,6 +83,14 @@ var Player = cocos.nodes.Node.extend({
             // Prevent reverse
             if ((vel.x == 0 || vel.x != vector.x * -1) &&
                     (vel.y == 0 || vel.y != vector.y * -1)) {
+                if ((vector.x < 0 && !this.flipped) || (vector.x > 0 && this.flipped) ) {
+                    // console.log('flip');
+                    this.flipped = !this.flipped;
+                    var flip = cocos.actions.FlipX.create({
+                        flipX: this.flipped
+                    });
+                    this.sprite.runAction(flip);
+                }
                 this.set('velocity', vector);
             }
         }
@@ -127,19 +136,18 @@ var Player = cocos.nodes.Node.extend({
 	die: function() {
 	    this.setVelocity(new geom.Point(0, 0));
         this.dying = true;
-        console.log(this.deathFrames);
+        // console.log(this.deathFrames);
         var animation = cocos.Animation.create({
             frames: this.deathFrames,
             delay: 0.1
         });
-        console.log(animation);
+        // console.log(animation);
         var animate = cocos.actions.Animate.create({
             duration: 2.0,
             animation: animation
         });
-        console.log(animate);
+        // console.log(animate);
         animate.startWithTarget(this);
-        console.log(animate);
         animate.layer = this.get('parent');
         // This function will be called when the animation is done.
         animate.stop = function() {
