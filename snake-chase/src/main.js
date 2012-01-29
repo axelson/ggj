@@ -170,9 +170,11 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
             this.reset();
         }
         else {
-            this.reset();
-            alert('you lose');
-            this.resetLives();
+            // Game over!
+            var director = cocos.Director.get('sharedDirector');
+            var scene = cocos.nodes.Scene.create();
+            scene.addChild({child: GameOver.create()});
+            director.replaceScene(scene);
         }
     }
 });
@@ -190,14 +192,11 @@ var Menu = cocos.nodes.Layer.extend({
         
         this.set('isMouseEnabled', true);
         
-        
         var itemPlay = cocos.nodes.MenuItemImage.create({
             normalImage: '/resources/start.png',
             selectedImage: '/resources/start.png',
             callback: util.callback(this, 'playCallback')
         });
-        var playLabel = cocos.nodes.Label.create({string: 'Play!', fontSize: 16});
-        playLabel.set('anchorPoint', new geo.Point(0, 0));
         
         var menu = cocos.nodes.Menu.create({
             items: [itemPlay],
@@ -214,7 +213,43 @@ var Menu = cocos.nodes.Layer.extend({
         scene.addChild({child: SnakeChase.create()});
         director.replaceScene(scene);
     }
-})
+});
+
+var GameOver = cocos.nodes.Layer.extend({
+    init: function() {
+        GameOver.superclass.init.call(this);
+        
+        var s = cocos.Director.get('sharedDirector').get('winSize');
+        
+        var label = cocos.nodes.Label.create({string: 'Game Over!', fontSize: 32});
+        this.addChild({child: label, z:1});
+        label.set('position', geo.ccp(s.width / 2 - 100, 30));
+        label.set('position', geo.ccp(s.width / 2, s.height / 4));
+        
+        this.set('isMouseEnabled', true);
+        
+        var itemPlay = cocos.nodes.MenuItemImage.create({
+            normalImage: '/resources/try-again.png',
+            selectedImage: '/resources/try-again.png',
+            callback: util.callback(this, 'playCallback')
+        });
+        
+        var menu = cocos.nodes.Menu.create({
+            items: [itemPlay],
+        });
+        itemPlay.set('position', geo.ccp(s.width / 2, s.height / 2));
+        menu.set('position', ccp(0, 0));
+        this.addChild({child: menu, z: 1});
+    },
+    
+    playCallback: function() {
+        console.log('Play!');
+        var director = cocos.Director.get('sharedDirector')
+        var scene = cocos.nodes.Scene.create();
+        scene.addChild({child: SnakeChase.create()});
+        director.replaceScene(scene);
+    }
+});
 
 /**
  * Entry point for the application
