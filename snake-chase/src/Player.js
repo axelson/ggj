@@ -31,32 +31,59 @@ var circleOverlap = function(rect1, rect2) {
 
 var Player = cocos.nodes.Node.extend({
     velocity: null,
-
+    dying: false,
+    deathFrames: null,
+    sprite: null,
+    
     init: function() {
         Player.superclass.init.call(this);
 
-        var sprite = cocos.nodes.Sprite.create({
+        this.sprite = cocos.nodes.Sprite.create({
             file: '/resources/sprites.png',
             rect: new geom.Rect(80, 0, 16, 16)
         });
 
-        sprite.set('anchorPoint', new geom.Point(0, 0));
-        this.addChild({child: sprite});
-        this.set('contentSize', sprite.get('contentSize'));
+        this.sprite.set('anchorPoint', new geom.Point(0, 0));
+        
+        this.addChild({child: this.sprite});
+        this.set('contentSize', this.sprite.get('contentSize'));
         this.set('velocity', new geom.Point(0, PLAYER_SPEED));
+        
+        // Initialize death frames
+        this.deathFrames = Array();
+        var texture = cocos.Texture2D.create({
+            file: '/resources/explosion.jpg'
+        });
+        
+        var frame = null;
+        for (var i=0; i<4; i++) {
+            for (var j=0; j<4; j++) {
+                frame = cocos.SpriteFrame.create({
+                    texture: texture,
+                    rect: new geom.Rect(16 * i, 16 * j, 16, 16)
+                });
+                this.deathFrames.push(frame);
+            }
+        }
         this.scheduleUpdate();
     },
 
     setVelocity: function(vector) {
-        vel = util.copy(this.get('velocity'));
+        if (this.dying) {
+            this.set('velocity', new geom.Point(0, 0));
+        }
+        
+        else {
+            vel = util.copy(this.get('velocity'));
 
-        vector.x *= PLAYER_SPEED;
-        vector.y *= PLAYER_SPEED;
+            vector.x *= PLAYER_SPEED;
+            vector.y *= PLAYER_SPEED;
 
-        // Prevent reverse
-        if ((vel.x == 0 || vel.x != vector.x * -1) &&
-                (vel.y == 0 || vel.y != vector.y * -1)) {
-            this.set('velocity', vector);
+            // Prevent reverse
+            if ((vel.x == 0 || vel.x != vector.x * -1) &&
+                    (vel.y == 0 || vel.y != vector.y * -1)) {
+                this.set('velocity', vector);
+            }
         }
     },
 
@@ -71,6 +98,19 @@ var Player = cocos.nodes.Node.extend({
         this.testBounds();
         this.testDeathConditions();
     },
+    
+    redrawSprite: function() {
+        this.removeChild({child: this.sprite});
+        
+        this.sprite = cocos.nodes.Sprite.create({
+            file: '/resources/sprites.png',
+            rect: new geom.Rect(80, 0, 16, 16)
+        });
+
+        this.sprite.set('anchorPoint', new geom.Point(0, 0));
+        
+        this.addChild({child: this.sprite});
+    },
 
     testDeathConditions: function() {
         var vel = util.copy(this.get('velocity')),
@@ -78,11 +118,33 @@ var Player = cocos.nodes.Node.extend({
             snakeBox = this.get('parent').get('snake').get('boundingBox');
 
         if (geom.rectOverlapsRect(snakeBox, playerBox)) {
-            if (circleOverlap(snakeBox, playerBox)) {
+            if (circleOverlap(snakeBox, playerBox) && !this.dying) {
                 this.setVelocity(new geom.Point(0, 0));
-                var deaths = parseInt($('#death-count').html());
-                $('#death-count').html(deaths + 1);
-                this.get('parent').removeLife();
+                this.dying = true;
+                console.log(this.deathFrames);
+                var animation = cocos.Animation.create({
+                    frames: this.deathFrames,
+                    delay: 0.1
+                });
+                console.log(animation);
+                var animate = cocos.actions.Animate.create({
+                    duration: 2.0,
+                    animation: animation
+                });
+                console.log(animate);
+                animate.startWithTarget(this);
+                console.log(animate);
+                animate.layer = this.get('parent');
+                animate.stop = function() {
+                    // Reset sprite
+                    var deaths = parseInt($('#death-count').html());
+                    $('#death-count').html(deaths + 1);
+                    this.layer.removeLife();
+                }
+                this.sprite.runAction(animate);
+                // var deaths = parseInt($('#death-count').html());
+                // $('#death-count').html(deaths + 1);
+                // this.get('parent').removeLife();
             }
         }
 	},

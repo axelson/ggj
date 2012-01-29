@@ -68,6 +68,8 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     },
     
     reset: function() {
+        this.player.redrawSprite();
+        this.player.dying = false;
         this.player.set('position', new geo.Point(160, 250));
         this.snake.set('position', new geo.Point(280, 250));
         this.player.setVelocity(new geo.Point(0, 0));
