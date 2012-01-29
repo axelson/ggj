@@ -9,6 +9,8 @@ var Snake = cocos.nodes.Node.extend({
     body: null,
     head: null,
     startTime: null,
+    posToMove: null,
+    step: 0,
 
     init: function() {
         Snake.superclass.init.call(this);
@@ -32,7 +34,6 @@ var Snake = cocos.nodes.Node.extend({
         //this.set('head', spriteHead);
 
         this.set('velocity', new geom.Point(60, 120));
-        this.scheduleUpdate();
 
         var body = new doublyLinkedList.DoublyLinkedList()
         var sprite2 = cocos.nodes.Sprite.create({
@@ -56,24 +57,79 @@ var Snake = cocos.nodes.Node.extend({
         var d = new Date();
         d.getTime();
         this.set('startTime', d);
+
+        this.set('posToMove', new geom.Point(-48,0));
+        var posToMove = this.get('posToMove');
+        console.log(posToMove.x + " " + posToMove.y);
+
+        //this.set('step', 0);
+
+        this.scheduleUpdate();
     },
 
     update: function(dt) {
         //var pos = util.copy(this.get('position'));
         var body = this.get('body');
 
+        var posToMove = this.get('posToMove');
+        //if(new Date().getTime() > this.get('startTime').getTime() + 800) {
+        //    body.item(0).set('velocity', new geom.Point(0, 60));
+        //    var pos = util.copy(body.item(i).get('position'));
+        //}
+        if(new Date().getTime() > this.get('startTime').getTime() + 800) {
+            var pos = util.copy(body.item(0).get('position'));
+            //console.log(pos.x + " " + pos.y);
+        }
+
         for(var i=0; i<body.size() ; i++) {
             //console.log("on " + i);
             var pos = util.copy(body.item(i).get('position'));
             var vel = util.copy(body.item(i).get('velocity'));
-            if(new Date().getTime() > this.get('startTime').getTime() + 800) {
-                pos.x += dt * vel.x;
-                pos.y += dt * vel.y;
+            var dX = dt * -vel.x;
+            var dY = dt * -vel.y;
+            var newX = pos.x + dX;
+            var newY = pos.y + dY;
+            //console.log(pos.x + " " + pos.y);
+            //if(pos.x <= posToMove.x
+
+            var posToMove = this.get('posToMove');
+            //console.log(posToMove);
+            //if(pos.x <= posToMove.x &&  newX >= posToMove.x) {
+            if(this.isBetween(pos.x, newX, posToMove.x) && this.isBetween(pos.y, newY, posToMove.y)) {
+                //console.log('true');
+                console.log("set vel for " + i);
+                body.item(i).set('velocity', new geom.Point(0,60));
+
+                dY += dX - Math.abs(pos.x - posToMove.x);
+                newY = dt * -vel.y;
+                pos.x = posToMove.x;
+                pos.y = pos.y + dY;
             } else {
-                pos.x += dt * -vel.x;
-                pos.y += dt * -vel.y;
+                pos.x = newX;
+                pos.y = newY;
             }
+
             this.get('body').item(i).set('position', pos);
+        }
+        var step = util.copy(this.get('step'));
+        step += 1;
+        this.set('step', step);
+        //console.log("on step " + step);
+    },
+
+    // Check if val is between min and max
+    isBetween: function(min, max, val) {
+        // If min and max are reversed, swap them
+        if(min > max) {
+            var tmp = min;
+            min = max;
+            max = tmp;
+        }
+
+        if(val >= min && val <= max) {
+            return true;
+        } else {
+            return false;
         }
     },
 
