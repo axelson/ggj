@@ -137,7 +137,6 @@ var Player = cocos.nodes.Node.extend({
         // console.log(snakePos);
         while(segment !== null) {
             segmentBox = segment.get('boundingBox');
-            segmentBox.origin = segment.absPosition();
             if (circleOverlap(segmentBox, playerBox) && !this.dying) {
                 console.log('die');
                 this.die();

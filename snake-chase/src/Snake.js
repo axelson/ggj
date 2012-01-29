@@ -3,12 +3,6 @@ var geom = require('geometry');
 var util = require('util');
 var doublyLinkedList = require('./DoublyLinkedList');
 
-var absPosition = function() {
-    var parentPos = this.get('parent').get('position'),
-        myPos = this.get('position');
-    return new geom.Point(myPos.x + parentPos.x, myPos.y + parentPos.y);
-};
-
 var Snake = cocos.nodes.Node.extend({
     initialVelocity: new geom.Point(-1, 0),
     speed: 60,
@@ -18,10 +12,18 @@ var Snake = cocos.nodes.Node.extend({
     startTime: null,
     posToMove: null,
     step: 0,
+    parent: null,
 
     init: function(opts) {
         Snake.superclass.init.call(this);
-
+        this.parent = opts.parent;
+        var pos = new geom.Point(0, 0);
+        if (opts.initialPos !== null) {
+            pos = opts.initialPos;
+        }
+        
+        // We will add to parent to get initial
+        
         var moves = new doublyLinkedList.DoublyLinkedList()
 
         moves.add({
@@ -67,12 +69,11 @@ var Snake = cocos.nodes.Node.extend({
             file: '/resources/snake-head.png',
             //rect: new geom.Rect(96, 0, 16, 16)
         });
-        sprite2.set('position', new geom.Point(0, 0));
-        sprite2.set('absPosition', absPosition);
+        sprite2.set('position', pos);
         
         sprite2.set('velocity', util.copy(this.get('initialVelocity')));
         body.add(sprite2);
-        this.addChild({child: body.item(0)});
+        this.parent.addChild({child: body.item(0)});
 
         this.set('body', body);
         this.addSection();
@@ -200,11 +201,10 @@ var Snake = cocos.nodes.Node.extend({
             //rect: new geom.Rect(64, 0, 16, 16)
         });
         var lastPos = body.last().get('position');
-        sprite.set('position', new geom.Point(lastPos.x + 16, 0));
+        sprite.set('position', new geom.Point(lastPos.x + 16, lastPos.y));
         sprite.set('velocity', this.get('initialVelocity'));
-        sprite.set('absPosition', absPosition);
         body.add(sprite);
-        this.addChild({child: body.last()});
+        this.parent.addChild({child: body.last()});
     }
 });
 
