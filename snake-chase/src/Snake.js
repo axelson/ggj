@@ -4,7 +4,6 @@ var util = require('util');
 var doublyLinkedList = require('./DoublyLinkedList');
 
 var Snake = cocos.nodes.Node.extend({
-    velocity: null,
     initialVelocity: new geom.Point(60, 0),
     body: null,
     moves: null,
@@ -33,8 +32,6 @@ var Snake = cocos.nodes.Node.extend({
         //this.set('contentSize', spriteHead.get('contentSize'));
 
         //this.set('head', spriteHead);
-
-        this.set('velocity', new geom.Point(60, 120));
 
         var moves = new doublyLinkedList.DoublyLinkedList()
         moves.add({
@@ -142,6 +139,7 @@ var Snake = cocos.nodes.Node.extend({
                     // Calculate new position instead of moving forward
                     newX = pos.x + dX;
                     newY = pos.y + dY;
+                    console.log("dX: " + dX + " dY: " + dY + " newX: "+ newX);
 
                     // If this is the last segment to reach the move, remove it
                     if(i+1 == body.size()) {
