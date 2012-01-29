@@ -8,8 +8,9 @@ var cocos  = require('cocos2d')   // Import the cocos2d module
   , Player = require('./Player').Player
   , Life = require('./Life').Life
   , Food   = require('./Food').Food
-  , Snake  = require('./Snake').Snake;
-
+  , Snake  = require('./Snake').Snake
+  , Background  = require('./Background').Background;
+  
 var KEYS = {
     left: 37,
     up: 38,
@@ -31,10 +32,12 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     tick: null,
     timeLabel: null,
     level: null,
+    points: null,
     
     init: function (opts) {
         // You must always call the super class version of init
         this.level = opts.level;
+        this.points = opts.points;
         
         SnakeChase.superclass.init.call(this);
 
@@ -61,8 +64,20 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         var winSize = cocos.Director.get('sharedDirector').get('winSize');
         var levelLabel = cocos.nodes.Label.create({string: "Level: " + this.level, fontSize: 16});
         levelLabel.set('anchorPoint', new geo.Point(0, 0));
-        levelLabel.set('position', new geo.Point(winSize.width / 2, 10));
+        levelLabel.set('position', new geo.Point(winSize.width / 2 - winSize.width / 4 , 10));
         this.addChild({child: levelLabel});
+
+        // Set up point label
+        var winSize = cocos.Director.get('sharedDirector').get('winSize');
+        var pointLabel = cocos.nodes.Label.create({string: "Points: " + this.points, fontSize: 16});
+        pointLabel.set('anchorPoint', new geo.Point(0, 0));
+        pointLabel.set('position', new geo.Point(winSize.width / 2 , 10));
+        this.addChild({child: pointLabel});
+
+        var background = Background.create();
+        background.set('position', new geo.Point(720,580));
+        this.addChild({child: background});
+        this.set('background', background);
         
         var player = Player.create();
         player.set('position', new geo.Point(160, 250));
@@ -106,6 +121,7 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         else {
             timeString += '' + seconds;
         }
+        
         this.timeLabel.set('string', timeString);
     },
     
@@ -195,7 +211,7 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         var next = NextLevel.create({
             nextLevel: this.level + 1,
             time: this.tick,
-            score: 0,
+            points: this.points + 100,
             lives: this.lives.length
         });
         scene.addChild({child: next});
@@ -217,7 +233,7 @@ var Menu = cocos.nodes.Layer.extend({
         this.set('isMouseEnabled', true);
         
         var itemPlay = cocos.nodes.MenuItemImage.create({
-            normalImage: '/resources/start.png',
+            normalImage: '/resources/title.png',
             selectedImage: '/resources/start.png',
             callback: util.callback(this, 'playCallback')
         });
@@ -234,7 +250,7 @@ var Menu = cocos.nodes.Layer.extend({
         console.log('Play!');
         var director = cocos.Director.get('sharedDirector');
         var scene = cocos.nodes.Scene.create();
-        scene.addChild({child: SnakeChase.create({level: 1, lives: 3})});
+        scene.addChild({child: SnakeChase.create({level: 1, points: 0, lives: 3})});
         director.replaceScene(scene);
     }
 });
@@ -270,21 +286,21 @@ var GameOver = cocos.nodes.Layer.extend({
         console.log('Play!');
         var director = cocos.Director.get('sharedDirector')
         var scene = cocos.nodes.Scene.create();
-        scene.addChild({child: SnakeChase.create({level: 1, lives: 3})});
+        scene.addChild({child: SnakeChase.create({level: 1, points: 0, lives: 3})});
         director.replaceScene(scene);
     }
 });
 
 var NextLevel = cocos.nodes.Layer.extend({
     time: null,
-    score: null,
+    points: null,
     nextLevel: null,
     lives: null,
     
     init: function(opts) {
         NextLevel.superclass.init.call(this);
         this.time = opts.time;
-        this.score = opts.score;
+        this.points = opts.points;
         this.nextLevel = opts.nextLevel;
         this.lives = opts.lives;
         console.log(opts.lives);
@@ -318,6 +334,7 @@ var NextLevel = cocos.nodes.Layer.extend({
         var scene = cocos.nodes.Scene.create();
         scene.addChild({child: SnakeChase.create({
             level: this.nextLevel,
+            points: this.nextLevel * 100,
             lives: this.lives
         })});
         director.replaceScene(scene);

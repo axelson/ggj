@@ -16,8 +16,8 @@
             }
             #snake_chase_app {
                 border: 1px solid #000;
-                width: 480px;
-                height: 320px;
+                width: 720px;
+                height: 540px;
                 margin: 0 auto;
                 -webkit-box-shadow: 0 3px 10px rgba(0, 0, 0, 0.75);
                 -moz-box-shadow:    0 3px 10px rgba(0, 0, 0, 0.75);
@@ -28,7 +28,12 @@
         ${scripts}
     </head> 
     <body> 
-        <h1>Snake Chase</h1> 
+       <audio autoplay="autoplay">
+            <source src="/resources/snake-chase-bg.mp3" type="audio/mp3" />
+            Your browser does not support the audio tag.
+       </audio>
+       
        <div id="snake_chase_app">Snake Chase is loading...</div>
+       
     </body>
 </html>

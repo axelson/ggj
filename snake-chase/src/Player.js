@@ -39,8 +39,8 @@ var Player = cocos.nodes.Node.extend({
         Player.superclass.init.call(this);
 
         this.sprite = cocos.nodes.Sprite.create({
-            file: '/resources/sprites.png',
-            rect: new geom.Rect(80, 0, 16, 16)
+            file: '/resources/turtle.png',
+            //rect: new geom.Rect(80, 0, 16, 16)
         });
 
         this.sprite.set('anchorPoint', new geom.Point(0, 0));
@@ -60,7 +60,7 @@ var Player = cocos.nodes.Node.extend({
             for (var j=0; j<4; j++) {
                 frame = cocos.SpriteFrame.create({
                     texture: texture,
-                    rect: new geom.Rect(16 * i, 16 * j, 16, 16)
+                    rect: new geom.Rect(16 * i, 16 * j, 32, 32)
                 });
                 this.deathFrames.push(frame);
             }
@@ -103,8 +103,8 @@ var Player = cocos.nodes.Node.extend({
         this.removeChild({child: this.sprite});
         
         this.sprite = cocos.nodes.Sprite.create({
-            file: '/resources/sprites.png',
-            rect: new geom.Rect(80, 0, 16, 16)
+            file: '/resources/turtle.png',
+            //rect: new geom.Rect(80, 0, 16, 16)
         });
 
         this.sprite.set('anchorPoint', new geom.Point(0, 0));

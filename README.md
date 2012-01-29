@@ -4,3 +4,7 @@ must escape his cycle of death by tricking the snake into eating itself.
 We plan to use [Cocos2D-javascript](http://cocos2d-javascript.org/) as the HTML5 game engine.
 
 The main developers are [@axelson](https://github.com/axelson), [@keokilee](https://github.com/keokilee), and [@yongwen](https://github.com/yongwen)
+
+Credits:
+Audio: "Variation on Egmont", Kevin MacLeod's Incompetech 
+       http://incompetech.com/m/c/royalty-free/index.html

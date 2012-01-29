@@ -6,12 +6,12 @@ var Snake = cocos.nodes.Node.extend({
         Snake.superclass.init.call(this);
 
         var spriteHead = cocos.nodes.Sprite.create({
-            file: '/resources/sprites.png',
-            rect: new geom.Rect(96, 0, 16, 16)
+            file: '/resources/snake-head.png',
+            //rect: new geom.Rect(96, 0, 16, 16)
         });
         var sprite = cocos.nodes.Sprite.create({
-            file: '/resources/sprites.png',
-            rect: new geom.Rect(64, 0, 16, 16)
+            file: '/resources/snake-body.png',
+            //rect: new geom.Rect(64, 0, 16, 16)
         });
 
         sprite.set('anchorPoint', new geom.Point(0, 0));
