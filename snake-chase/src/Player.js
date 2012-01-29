@@ -143,9 +143,7 @@ var Player = cocos.nodes.Node.extend({
         animate.layer = this.get('parent');
         // This function will be called when the animation is done.
         animate.stop = function() {
-            // Reset sprite
-            var deaths = parseInt($('#death-count').html());
-            $('#death-count').html(deaths + 1);
+            // Update lives and reset
             this.layer.removeLife();
         }
         this.sprite.runAction(animate);

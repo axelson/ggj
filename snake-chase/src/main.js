@@ -28,6 +28,8 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     snake: null,
     food: null,
     lives: null,
+    tick: null,
+    timeLabel: null,
     
     init: function () {
         // You must always call the super class version of init
@@ -38,6 +40,19 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         // Set up lives on the right side.
         this.lives = Array();
         this.resetLives();
+        
+        // Set up timer on the left side.
+        var timeLabel = cocos.nodes.Label.create({string: "Time: 0:00", fontSize: 16});
+        timeLabel.set('anchorPoint', new geo.Point(0, 0));
+        timeLabel.set('position', new geo.Point(15, 10));
+        this.addChild({child: timeLabel});
+        this.timeLabel = timeLabel;
+        
+        this.tick = 0;
+        this.schedule({
+            method: this.updateTimer,
+            interval: 1
+        });
         
         var player = Player.create();
         player.set('position', new geo.Point(160, 250));
@@ -58,7 +73,7 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         this.schedule({
             method: this.addFood,
             interval: 3
-        })
+        });
     },
     
     reset: function() {
@@ -67,6 +82,21 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         this.player.set('position', new geo.Point(160, 250));
         this.snake.set('position', new geo.Point(280, 250));
         this.player.setVelocity(new geo.Point(0, 0));
+    },
+    
+    updateTimer: function(dt) {
+        this.tick += 1;
+        
+        var minutes = Math.floor(this.tick / 60);
+        var seconds = this.tick % 60;
+        var timeString = 'Time: ' + minutes + ':';
+        if (seconds < 10) {
+            timeString += '0' + seconds;
+        }
+        else {
+            timeString += '' + seconds;
+        }
+        this.timeLabel.set('string', timeString);
     },
     
     addFood: function() {

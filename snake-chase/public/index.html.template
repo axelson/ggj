@@ -29,7 +29,6 @@
     </head> 
     <body> 
         <h1>Snake Chase</h1> 
-        <h3>Deaths: <span id='death-count'>0</span></h3>
        <div id="snake_chase_app">Snake Chase is loading...</div>
     </body>
 </html>
