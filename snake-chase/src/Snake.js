@@ -7,6 +7,7 @@ var Snake = cocos.nodes.Node.extend({
     velocity: null,
     initialVelocity: new geom.Point(60, 0),
     body: null,
+    moves: null,
     head: null,
     startTime: null,
     posToMove: null,
@@ -34,6 +35,21 @@ var Snake = cocos.nodes.Node.extend({
         //this.set('head', spriteHead);
 
         this.set('velocity', new geom.Point(60, 120));
+
+        var moves = new doublyLinkedList.DoublyLinkedList()
+        moves.add({
+            x: -48,
+            y: 0,
+            vX: 0,
+            vY: 60
+        });
+        moves.add({
+            x: -48,
+            y: -30,
+            vX: 60,
+            vY: 0
+        });
+        this.set('moves', moves);
 
         var body = new doublyLinkedList.DoublyLinkedList()
         var sprite2 = cocos.nodes.Sprite.create({
@@ -92,24 +108,27 @@ var Snake = cocos.nodes.Node.extend({
             //console.log(pos.x + " " + pos.y);
             //if(pos.x <= posToMove.x
 
-            var posToMove = this.get('posToMove');
-            //console.log(posToMove);
-            //if(pos.x <= posToMove.x &&  newX >= posToMove.x) {
-            if(this.isBetween(pos.x, newX, posToMove.x) && this.isBetween(pos.y, newY, posToMove.y)) {
-                //console.log('true');
-                console.log("set vel for " + i);
-                body.item(i).set('velocity', new geom.Point(0,60));
+            var moves = this.get('moves');
+            for(var j=0; j<moves.size() ;j++) {
+                var posToMove = moves.item(j);
+                //console.log(posToMove);
+                //if(pos.x <= posToMove.x &&  newX >= posToMove.x) {
+                if(this.isBetween(pos.x, newX, posToMove.x) && this.isBetween(pos.y, newY, posToMove.y)) {
+                    //console.log('true');
+                    console.log("set vel for " + i);
+                    body.item(i).set('velocity', new geom.Point(0,60));
 
-                dY += dX - Math.abs(pos.x - posToMove.x);
-                newY = dt * -vel.y;
-                pos.x = posToMove.x;
-                pos.y = pos.y + dY;
-            } else {
-                pos.x = newX;
-                pos.y = newY;
+                    dY += dX - Math.abs(pos.x - posToMove.x);
+                    newY = dt * -vel.y;
+                    pos.x = posToMove.x;
+                    pos.y = pos.y + dY;
+                } else {
+                    pos.x = newX;
+                    pos.y = newY;
+                }
+
+                this.get('body').item(i).set('position', pos);
             }
-
-            this.get('body').item(i).set('position', pos);
         }
         var step = util.copy(this.get('step'));
         step += 1;
