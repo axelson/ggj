@@ -4,6 +4,31 @@ var cocos = require('cocos2d'),
 
 var PLAYER_SPEED = 100;
 
+var circleOverlap = function(rect1, rect2) {
+    // Get radiuses and approximate the center.
+    var rad1 = util.copy(rect1.size.width / 2),
+        rad2 = util.copy(rect2.size.width / 2);
+    var pos1 = util.copy(rect1.origin),
+        pos2 = util.copy(rect2.origin);
+        
+    pos1.x += rad1;
+    pos1.y += rad1;
+    pos2.x += rad2;
+    pos2.y += rad2;
+    
+    // Calculate distance between two centers.
+    var dx = pos1.x - pos2.x;
+    var dy = pos1.y - pos2.y;
+    var distance = Math.sqrt(dx * dx + dy * dy);
+    
+    if (distance < rad1 + rad2) {
+        // We have overlap
+        return true;
+    }
+    
+    return false;
+}
+
 var Player = cocos.nodes.Node.extend({
     velocity: null,
 
@@ -53,9 +78,11 @@ var Player = cocos.nodes.Node.extend({
             snakeBox = this.get('parent').get('snake').get('boundingBox');
 
         if (geom.rectOverlapsRect(snakeBox, playerBox)) {
+            if (circleOverlap(snakeBox, playerBox)) {
                 var deaths = parseInt($('#death-count').html());
                 $('#death-count').html(deaths + 1);
                 alert("you lose");
+            }
         }
 	},
 	
