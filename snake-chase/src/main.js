@@ -84,8 +84,10 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         this.addChild({child: player});
         this.set('player', player);
 
-        var snake = Snake.create();
-        snake.set('position', new geo.Point(280, 250));
+        var snake = Snake.create({
+            parent: this,
+            initialPos: new geo.Point(280, 250)
+        });
         this.addChild({child: snake});
         this.set('snake', snake);
         
@@ -94,7 +96,7 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         for (var i=0; i<MAX_FOOD; i++) {
             this.food.push(Food.create());
         }
-        console.log(this.food);
+        // console.log(this.food);
         this.schedule({
             method: this.addFood,
             interval: 3

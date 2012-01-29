@@ -3,57 +3,67 @@ var geom = require('geometry');
 var util = require('util');
 var doublyLinkedList = require('./DoublyLinkedList');
 
+var MAX_MOVES = 3;
+
 var Snake = cocos.nodes.Node.extend({
     initialVelocity: new geom.Point(-1, 0),
-    speed: 60,
+    speed: 80,
     body: null,
     moves: null,
     head: null,
     startTime: null,
     posToMove: null,
     step: 0,
+    parent: null,
 
-    init: function() {
+    init: function(opts) {
         Snake.superclass.init.call(this);
-
+        this.parent = opts.parent;
+        var pos = new geom.Point(0, 0);
+        if (opts.initialPos !== null) {
+            pos = opts.initialPos;
+        }
+        
+        // We will add to parent to get initial
+        
         var moves = new doublyLinkedList.DoublyLinkedList()
 
-        moves.add({
-            x: -48,
-            y: 0,
-            vX: 0,
-            vY: -1
-        });
-        moves.add({
-            x: -48,
-            y: -150,
-            vX: +1,
-            vY: 0
-        });
-        moves.add({
-            x: -10,
-            y: -150,
-            vX: 0,
-            vY: +1
-        });
-        moves.add({
-            x: -10,
-            y: -30,
-            vX: -1,
-            vY: 0
-        });
-        moves.add({
-            x: -40,
-            y: -30,
-            vX: 0,
-            vY: +1
-        });
-        moves.add({
-            x: -40,
-            y: 30,
-            vX: +1,
-            vY: 0
-        });
+        // moves.add({
+        //     x: -48,
+        //     y: 0,
+        //     vX: 0,
+        //     vY: -1
+        // });
+        // moves.add({
+        //     x: -48,
+        //     y: -150,
+        //     vX: +1,
+        //     vY: 0
+        // });
+        // moves.add({
+        //     x: -10,
+        //     y: -150,
+        //     vX: 0,
+        //     vY: +1
+        // });
+        // moves.add({
+        //     x: -10,
+        //     y: -30,
+        //     vX: -1,
+        //     vY: 0
+        // });
+        // moves.add({
+        //     x: -40,
+        //     y: -30,
+        //     vX: 0,
+        //     vY: +1
+        // });
+        // moves.add({
+        //     x: -40,
+        //     y: 30,
+        //     vX: +1,
+        //     vY: 0
+        // });
         this.set('moves', moves);
 
         var body = new doublyLinkedList.DoublyLinkedList()
@@ -61,10 +71,11 @@ var Snake = cocos.nodes.Node.extend({
             file: '/resources/snake-head.png',
             //rect: new geom.Rect(96, 0, 16, 16)
         });
-        sprite2.set('position', new geom.Point(0, 0));
+        sprite2.set('position', pos);
+        
         sprite2.set('velocity', util.copy(this.get('initialVelocity')));
         body.add(sprite2);
-        this.addChild({child: body.item(0)});
+        this.parent.addChild({child: body.item(0)});
 
         this.set('body', body);
         this.addSection();
@@ -84,10 +95,57 @@ var Snake = cocos.nodes.Node.extend({
         console.log(posToMove.x + " " + posToMove.y);
 
         //this.set('step', 0);
-
+        
+        this.schedule({
+            method: this.trackPlayer,
+            interval: 1
+        });
+        
         this.scheduleUpdate();
     },
-
+    
+    trackPlayer: function() {   
+        if (this.moves.size() == MAX_MOVES) {
+            return;
+        }
+        
+        // Find the player.
+        var head = this.body.item(0);
+        var myPos = this.body.item(0).get('position');
+        var playerPos = this.get('parent').get('player').get('position');
+        
+        var dx = myPos.x - playerPos.x;
+        var dy = myPos.y - playerPos.y;
+        var myVel = head.get('velocity');
+        var move = {
+            x: myPos.x + myVel.x,
+            y: myPos.y + myVel.y,
+            vX: 0,
+            vY: 0
+        }
+        
+        console.log(myVel.x);
+        if (myVel.x == 0) {
+            if (dx > 0) {
+                move.vX = -1;
+            }
+            else {
+                move.vX = 1;
+            }
+        }
+        else {
+            if (dy > 0) {
+                move.vY = -1;
+            }
+            else {
+                move.vY = 1;
+            }
+        }
+        console.log('adding move');
+        console.log(move);
+        this.moves.add(move);
+    },
+    
     update: function(dt) {
         //var pos = util.copy(this.get('position'));
         var body = this.get('body');
@@ -192,10 +250,10 @@ var Snake = cocos.nodes.Node.extend({
             //rect: new geom.Rect(64, 0, 16, 16)
         });
         var lastPos = body.last().get('position');
-        sprite.set('position', new geom.Point(lastPos.x + 16, 0));
+        sprite.set('position', new geom.Point(lastPos.x + 16, lastPos.y));
         sprite.set('velocity', this.get('initialVelocity'));
         body.add(sprite);
-        this.addChild({child: body.last()});
+        this.parent.addChild({child: body.last()});
     }
 });
 
