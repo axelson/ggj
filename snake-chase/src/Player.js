@@ -79,9 +79,11 @@ var Player = cocos.nodes.Node.extend({
 
         if (geom.rectOverlapsRect(snakeBox, playerBox)) {
             if (circleOverlap(snakeBox, playerBox)) {
+                this.setVelocity(new geom.Point(0, 0));
                 var deaths = parseInt($('#death-count').html());
                 $('#death-count').html(deaths + 1);
                 alert("you lose");
+                this.get('parent').reset();
             }
         }
 	},
