@@ -45,7 +45,7 @@ var Snake = cocos.nodes.Node.extend({
         });
         moves.add({
             x: -48,
-            y: -30,
+            y: -150,
             vX: 60,
             vY: 0
         });
@@ -98,8 +98,8 @@ var Snake = cocos.nodes.Node.extend({
         }
 
         for(var i=0; i<body.size() ; i++) {
-            //console.log("on " + i);
             var pos = util.copy(body.item(i).get('position'));
+            //console.log("on " + i + " at " + pos.x + ", " + pos.y);
             var vel = util.copy(body.item(i).get('velocity'));
             var dX = dt * -vel.x;
             var dY = dt * -vel.y;
@@ -109,25 +109,44 @@ var Snake = cocos.nodes.Node.extend({
             //if(pos.x <= posToMove.x
 
             var moves = this.get('moves');
+            // Still move if there are no planned moves
+            if(moves.size() == 0) {
+                pos.x = newX;
+                pos.y = newY;
+                this.get('body').item(i).set('position', pos);
+            }
             for(var j=0; j<moves.size() ;j++) {
-                var posToMove = moves.item(j);
-                //console.log(posToMove);
-                //if(pos.x <= posToMove.x &&  newX >= posToMove.x) {
-                if(this.isBetween(pos.x, newX, posToMove.x) && this.isBetween(pos.y, newY, posToMove.y)) {
+                var move = moves.item(j);
+                //console.log(move);
+                //if(pos.x <= move.x &&  newX >= move.x) {
+                if(this.isBetween(pos.x, newX, move.x) && this.isBetween(pos.y, newY, move.y)) {
                     //console.log('true');
-                    console.log("set vel for " + i);
-                    body.item(i).set('velocity', new geom.Point(0,60));
+                    console.log("set vel for " + i + " to " + move.vX + ", " + move.vY);
+                    body.item(i).set('velocity', new geom.Point(move.vX,move.vY));
 
-                    dY += dX - Math.abs(pos.x - posToMove.x);
+                    //dY += dX - Math.abs(pos.x - move.x);
                     newY = dt * -vel.y;
-                    pos.x = posToMove.x;
+                    console.log(i + ": setting pos x ("+pos.x+") to move x "+ move.x);
+                    pos.x = move.x;
+                    console.log(i + ": setting pos x ("+pos.x+") to move x "+ move.x);
                     pos.y = pos.y + dY;
+                    this.get('body').item(i).set('position', pos);
+                    var pos2 = util.copy(body.item(i).get('position'));
+                    console.log(i + " New: "+ pos2.x + ", "+ pos2.y);
+
+                    // If this is the last segment to reach the move, remove it
+                    if(i+1 == body.size()) {
+                        console.log("Going to remove, on " + j + "  moves: " + moves);
+                        moves.remove(j);
+                        console.log("Going to remove, on " + j + "  moves: " + moves);
+                    }
+
                 } else {
                     pos.x = newX;
                     pos.y = newY;
+                    this.get('body').item(i).set('position', pos);
                 }
 
-                this.get('body').item(i).set('position', pos);
             }
         }
         var step = util.copy(this.get('step'));
