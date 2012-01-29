@@ -38,31 +38,18 @@ var Snake = cocos.nodes.Node.extend({
             file: '/resources/sprites.png',
             rect: new geom.Rect(96, 0, 16, 16)
         });
-        sprite2.set('position', new geom.Point(1, 0));
+        sprite2.set('position', new geom.Point(0, 0));
+        sprite2.set('velocity', new geom.Point(60, 0));
         body.add(sprite2);
         this.addChild({child: body.item(0)});
 
-        var sprite3 = cocos.nodes.Sprite.create({
-            file: '/resources/sprites.png',
-            rect: new geom.Rect(64, 0, 16, 16)
-        });
-        sprite3.set('position', new geom.Point(16, 0));
-        body.add(sprite3);
-        this.addChild({child: body.item(1)});
-
-        var sprite4 = cocos.nodes.Sprite.create({
-            file: '/resources/sprites.png',
-            rect: new geom.Rect(64, 0, 16, 16)
-        });
-        sprite4.set('position', new geom.Point(32, 0));
-        body.add(sprite4);
-        this.addChild({child: body.item(2)});
-
-        body.add(new geom.Point(2, 0));
-        body.add(new geom.Point(3, 0));
-
-
-
+        this.set('body', body);
+        this.addSection();
+        this.addSection();
+        this.addSection();
+        this.addSection();
+        this.addSection();
+        body = this.get('body', body);
         this.set('body', body);
 
         var d = new Date();
@@ -72,51 +59,29 @@ var Snake = cocos.nodes.Node.extend({
 
     update: function(dt) {
         //var pos = util.copy(this.get('position'));
-        var vel = util.copy(this.get('velocity'));
-        //var posTest = util.copy(this.get('head').get('position'));
-        var posTest2 = util.copy(this.get('body').item(0).get('position'));
-        var posTest3 = util.copy(this.get('body').item(1).get('position'));
-//        var test = util.copy(this.get('head'));
-//        test.set('anchorPoint', new geom.Point(-2, 0));
-        //var test2 = this.get('head');
-        //test2.set('anchorPoint', new geom.Point(-3, 0));
-        var test3 = this.get('anchorPoint');
-        //console.log("getting" + test3);
+        var body = this.get('body');
 
-        //var d = new Date();
-        //var curTime = d.getTime();
-        //if(this.get('startTime') > curTime + 20) {
-        //    posTest2.x += dt * vel.x;
-        //    posTest2.y += dt * vel.y;
-        //} else {
-        //    posTest2.x += dt * -vel.x;
-        //    posTest2.y += dt * -vel.y;
-        //}
-        posTest2.x += dt * -vel.x;
-        posTest2.y += dt * -vel.y;
-        posTest3.x += dt * -vel.x;
-        posTest3.y += dt * vel.y;
-        console.log("body pos x="+ posTest2.x + " and y="+ posTest2.y);
-        //posTest.x += dt * vel.x;
-        //posTest.y += dt * vel.y;
-        //pos.x += dt * vel.x;
-        //pos.y += dt * vel.y;
-
-        //this.get('head').set('position', posTest);
-        this.get('body').item(0).set('position', posTest2);
-        this.get('body').item(1).set('position', posTest3);
-        //this.set('position', pos);
-//        this.set('head', test);
+        for(var i=0; i<body.size() ; i++) {
+            //console.log("on " + i);
+            var pos = util.copy(body.item(i).get('position'));
+            var vel = util.copy(body.item(i).get('velocity'));
+            pos.x += dt * -vel.x;
+            pos.y += dt * -vel.y;
+            this.get('body').item(i).set('position', pos);
+        }
     },
 
     addSection: function() {
-        var body = util.copy(this.get('body'));
+        //var body = util.copy(this.get('body'));
+        var body = this.get('body');
 
         var sprite = cocos.nodes.Sprite.create({
             file: '/resources/sprites.png',
             rect: new geom.Rect(64, 0, 16, 16)
         });
-        sprite.set('position', new geom.Point(32, 0));
+        var lastPos = body.last().get('position');
+        sprite.set('position', new geom.Point(lastPos.x + 16, 0));
+        sprite.set('velocity', new geom.Point(0, 0));
         body.add(sprite);
         this.addChild({child: body.last()});
     }
