@@ -21,10 +21,15 @@ var Snake = cocos.nodes.Node.extend({
         moves.add({
             x: -48,
             y: 0,
-            type: "move",
-            vX: 0,
-            vY: -1
+            type: "grow"
         });
+        //moves.add({
+        //    x: -48,
+        //    y: 0,
+        //    type: "move",
+        //    vX: 0,
+        //    vY: -1
+        //});
         moves.add({
             x: -48,
             y: -150,
@@ -124,10 +129,14 @@ var Snake = cocos.nodes.Node.extend({
             var moves = this.get('moves');
             for(var j=0; j<moves.size() ;j++) {
                 var move = util.copy(moves.item(j));
-                if(move.type !== "move") {
-                    continue;
-                }
                 if(this.isBetween(pos.x, newX, move.x) && this.isBetween(pos.y, newY, move.y)) {
+                    if(move.type !== "move") {
+                        if(move.type === "grow") {
+                            this.grow();
+                            moves.remove(j);
+                        }
+                        continue;
+                    }
                     console.log("set vel for " + i + " to " + move.vX + ", " + move.vY);
                     // Set new velocity
                     body.item(i).set('velocity', new geom.Point(move.vX,move.vY));
@@ -190,6 +199,18 @@ var Snake = cocos.nodes.Node.extend({
         } else {
             return false;
         }
+    },
+
+    grow: function() {
+        console.log("Growing!");
+        var moves = this.get('moves');
+        moves.add({
+            x: -48,
+            y: 0,
+            type: "start"
+        });
+
+        this.set('moves', moves);
     },
 
     addSection: function() {
