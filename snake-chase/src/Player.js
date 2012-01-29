@@ -119,34 +119,36 @@ var Player = cocos.nodes.Node.extend({
 
         if (geom.rectOverlapsRect(snakeBox, playerBox)) {
             if (circleOverlap(snakeBox, playerBox) && !this.dying) {
-                this.setVelocity(new geom.Point(0, 0));
-                this.dying = true;
-                console.log(this.deathFrames);
-                var animation = cocos.Animation.create({
-                    frames: this.deathFrames,
-                    delay: 0.1
-                });
-                console.log(animation);
-                var animate = cocos.actions.Animate.create({
-                    duration: 2.0,
-                    animation: animation
-                });
-                console.log(animate);
-                animate.startWithTarget(this);
-                console.log(animate);
-                animate.layer = this.get('parent');
-                animate.stop = function() {
-                    // Reset sprite
-                    var deaths = parseInt($('#death-count').html());
-                    $('#death-count').html(deaths + 1);
-                    this.layer.removeLife();
-                }
-                this.sprite.runAction(animate);
-                // var deaths = parseInt($('#death-count').html());
-                // $('#death-count').html(deaths + 1);
-                // this.get('parent').removeLife();
+                this.die();
             }
         }
+	},
+	
+	die: function() {
+	    this.setVelocity(new geom.Point(0, 0));
+        this.dying = true;
+        console.log(this.deathFrames);
+        var animation = cocos.Animation.create({
+            frames: this.deathFrames,
+            delay: 0.1
+        });
+        console.log(animation);
+        var animate = cocos.actions.Animate.create({
+            duration: 2.0,
+            animation: animation
+        });
+        console.log(animate);
+        animate.startWithTarget(this);
+        console.log(animate);
+        animate.layer = this.get('parent');
+        // This function will be called when the animation is done.
+        animate.stop = function() {
+            // Reset sprite
+            var deaths = parseInt($('#death-count').html());
+            $('#death-count').html(deaths + 1);
+            this.layer.removeLife();
+        }
+        this.sprite.runAction(animate);
 	},
 	
 	testBounds: function() {
