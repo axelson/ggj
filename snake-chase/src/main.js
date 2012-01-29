@@ -5,6 +5,7 @@ var cocos  = require('cocos2d')   // Import the cocos2d module
   , geo    = require('geometry')  // Import the geometry module
   , ccp    = geo.ccp              // Short hand to create points
   , Player = require('./Player').Player
+  , Life = require('./Life').Life
   , Food   = require('./Food').Food
   , Snake  = require('./Snake').Snake;
 
@@ -31,22 +32,17 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     player: null,
     snake: null,
     food: null,
+    lives: null,
     init: function () {
         // You must always call the super class version of init
         SnakeChase.superclass.init.call(this);
 
         this.set('isKeyboardEnabled', true);
-        // Get size of canvas
-        // var s = cocos.Director.get('sharedDirector.winSize')
-        // 
-        // // Create label
-        // var label = cocos.nodes.Label.create({ string: 'Snake Chase', fontName: 'Arial', fontSize: 76 })
-        // 
-        // // Add label to layer
-        // this.addChild({ child: label, z:1 })
-        // 
-        // // Position the label in the centre of the view
-        // label.set('position', ccp(s.width / 2, s.height / 2))
+        
+        // Set up lives on the right side.
+        this.lives = Array();
+        this.resetLives();
+        
         var player = Player.create();
         player.set('position', new geo.Point(160, 250));
         this.addChild({child: player});
@@ -64,7 +60,7 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         for(var i=0; i<locations.food.length; i++) {
             loc = locations.food[i];
             cherry = Food.create();
-            console.log(loc);
+            // console.log(loc);
             cherry.set('position', new geo.Point(loc.x, loc.y));
             this.addChild({child: cherry});
             this.food.push(cherry);
@@ -74,7 +70,20 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     reset: function() {
         this.player.set('position', new geo.Point(160, 250));
         this.snake.set('position', new geo.Point(280, 250));
-        this.player.setVelocity(new geo.Point(0, 100));
+        this.player.setVelocity(new geo.Point(0, 0));
+    },
+    
+    resetLives: function() {
+        // Get size of canvas.
+        var s = cocos.Director.get('sharedDirector.winSize');
+        
+        var life = null;
+        for (var i=0; i<3; i++) {
+            life = Life.create();
+            life.set('position', new geo.Point(s.width - 20 * (i + 1), 20));
+            this.addChild({child: life});
+            this.lives.push(life);
+        }
     },
 
     keyDown: function(event) {
@@ -93,6 +102,21 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         }
         else if (event.keyCode == KEYS.down) {
             player.setVelocity(new geo.Point(0, 1));
+        }
+    },
+    
+    removeLife: function() {
+        // console.log(this.lives);
+        if (this.lives.length > 0) {
+            var life = this.lives.pop();
+            // console.log(life);
+            this.removeChild({child: life});
+            this.reset();
+        }
+        else {
+            this.reset();
+            alert('you lose');
+            this.resetLives();
         }
     }
 });
