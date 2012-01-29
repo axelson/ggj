@@ -23,13 +23,33 @@ var Snake = cocos.nodes.Node.extend({
             y: 0,
             type: "grow"
         });
+        moves.add({
+            x: -96,
+            y: 0,
+            type: "grow"
+        });
         //moves.add({
-        //    x: -48,
+        //    x: -144,
         //    y: 0,
-        //    type: "move",
-        //    vX: 0,
-        //    vY: -1
+        //    type: "stop"
         //});
+        moves.add({
+            x: -144,
+            y: 0,
+            type: "move",
+            vX: 0,
+            vY: -1
+        });
+        moves.add({
+            x: -144,
+            y: -48,
+            type: "grow"
+        });
+        moves.add({
+            x: -144,
+            y: -96,
+            type: "stop"
+        });
         moves.add({
             x: -48,
             y: -150,
@@ -136,11 +156,13 @@ var Snake = cocos.nodes.Node.extend({
                             moves.remove(j);
                         }
                         if(move.type === "start") {
-                            var headVel = util.copy(body.item(0).get('velocity'));
-                            for(var k=1; k<body.size() ; k++) {
-                                body.item(k).set('velocity', headVel);
-                            }
+                            console.log("should start!");
+                            this.start();
                             moves.remove(j);
+                        }
+                        if(move.type === "stop") {
+                            // error out
+                            stop.done();
                         }
                         continue;
                     }
@@ -161,8 +183,8 @@ var Snake = cocos.nodes.Node.extend({
                         // Set variable being changed to be directly in line
                         // and other one directly behind previous segment
                         var prevPos = body.item(i - 1).get('position');
-                        newY = xDir*move.y + yDir*(prevPos.y - 16*move.vY);
                         newX = yDir*move.x + xDir*(prevPos.x - 16*move.vX);
+                        newY = xDir*move.y + yDir*(prevPos.y - 16*move.vY);
                     }
 
                     // If this is the last segment to reach the move, remove it
@@ -212,19 +234,24 @@ var Snake = cocos.nodes.Node.extend({
         console.log("Growing!");
         var moves = this.get('moves');
         var body = this.get('body');
+
+        var headPos = util.copy(body.item(0).get('position'));
+        var headVel = util.copy(body.item(0).get('velocity'));
         //moves.add({
         //    x: -48,
         //    y: 0,
         //    type: "grow"
         //});
         moves.add({
-            x: -64,
-            y: 0,
+            x: headPos.x + 16*headVel.x,
+            y: headPos.y + 16*headVel.y,
             type: "start"
         });
         this.set('moves', moves);
 
+        // Stop all body segments
         for(var i=1; i<body.size() ; i++) {
+            body.item(i).set('prevVelocity', util.copy(body.item(i).get('velocity')));
             body.item(i).set('velocity', new geom.Point(0, 0));
         }
 
@@ -234,19 +261,48 @@ var Snake = cocos.nodes.Node.extend({
         });
 
 
-        var headPos = util.copy(body.item(0).get('position'));
-        var headVel = util.copy(body.item(0).get('velocity'));
         var xDir = Math.abs(headVel.x);
         var yDir = Math.abs(headVel.y);
         var newX = headPos.x - 16*headVel.x;
         var newY = headPos.y - 16*headVel.y;
         var newPos = new geom.Point(newX, newY);
-        sprite.set('position', newPos);
-        sprite.set('velocity', headVel);
+        //sprite.set('position', newPos);
+        sprite.set('position', headPos);
+        //sprite.set('velocity', headVel);
+        sprite.set('prevVelocity', headVel);
+        sprite.set('velocity', new geom.Point(0,0));
         body.addAt(1, sprite);
         this.addChild({child: body.item(1)});
     },
 
+    start: function() {
+        console.log("Starting!");
+        var body = this.get('body');
+        var headVel = util.copy(body.item(0).get('velocity'));
+        // First needs to be head velocity
+        body.item(1).set('velocity', headVel);
+        for(var k=2; k<body.size() ; k++) {
+            var moves = this.get('moves');
+            for(var j=0; j<moves.size() ; j++) {
+                var test = j;
+            }
+            var oldVel = util.copy(body.item(k).get('prevVelocity'));
+            console.log("old vel x: " + oldVel.x + " y: " + oldVel.y);
+            body.item(k).set('velocity', util.copy(body.item(k).get('prevVelocity')));
+            var prevPos = body.item(k - 1).get('position');
+            var prevVel = body.item(k - 1).get('velocity');
+            console.log(prevPos);
+            var xDir = Math.abs(prevVel.x);
+            var yDir = Math.abs(prevVel.y);
+            newX = yDir*prevPos.x + xDir*(prevPos.x - 16*prevVel.x);
+            newY = xDir*prevPos.y + yDir*(prevPos.y - 16*prevVel.y);
+            var pos = util.copy(body.item(k).get('position'));
+            pos.x = newX;
+            pos.y = newY;
+            this.get('body').item(k).set('position', pos);
+        }
+
+    },
     addSection: function() {
         //var body = util.copy(this.get('body'));
         var body = this.get('body');

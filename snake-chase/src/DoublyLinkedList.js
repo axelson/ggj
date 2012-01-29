@@ -99,7 +99,6 @@ DoublyLinkedList.prototype = {
      * @method addAt
      */
     addAt: function (i, data){
-        console.log("new add function on i: " + i);
 
         if(i > this.size()) {
           console.log("UNABLE to add at i: " + i + " because size: " + this.size());
@@ -119,9 +118,6 @@ DoublyLinkedList.prototype = {
         } else {
             // Get the location
             var before = this.itemNode(i-1);
-            console.log(this._head);
-            console.log("now before");
-            console.log(before);
             var after = before.next;
             before.next = node;
             after.prev = node;
