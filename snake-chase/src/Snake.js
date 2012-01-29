@@ -5,6 +5,7 @@ var doublyLinkedList = require('./DoublyLinkedList');
 
 var Snake = cocos.nodes.Node.extend({
     velocity: null,
+    initialVelocity: new geom.Point(60, 0),
     body: null,
     head: null,
     startTime: null,
@@ -81,7 +82,7 @@ var Snake = cocos.nodes.Node.extend({
         });
         var lastPos = body.last().get('position');
         sprite.set('position', new geom.Point(lastPos.x + 16, 0));
-        sprite.set('velocity', new geom.Point(0, 0));
+        sprite.set('velocity', this.get('initialVelocity'));
         body.add(sprite);
         this.addChild({child: body.last()});
     }
