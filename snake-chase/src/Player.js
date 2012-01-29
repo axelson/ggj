@@ -116,7 +116,7 @@ var Player = cocos.nodes.Node.extend({
         this.removeChild({child: this.sprite});
         
         this.sprite = cocos.nodes.Sprite.create({
-            file: '/resources/turtle.png',
+            file: '/resources/turtle.png'
             //rect: new geom.Rect(80, 0, 16, 16)
         });
 
@@ -134,11 +134,10 @@ var Player = cocos.nodes.Node.extend({
         var i = 0;
         var segment = snakeBody.item(i);
         var segmentBox = null;
-        console.log(snakePos);
+        // console.log(snakePos);
         while(segment !== null) {
             segmentBox = segment.get('boundingBox');
-            segmentBox.origin.x += snakePos.x;
-            segmentBox.origin.y += snakePos.y;
+            segmentBox.origin = segment.absPosition();
             if (circleOverlap(segmentBox, playerBox) && !this.dying) {
                 console.log('die');
                 this.die();

@@ -3,6 +3,12 @@ var geom = require('geometry');
 var util = require('util');
 var doublyLinkedList = require('./DoublyLinkedList');
 
+var absPosition = function() {
+    var parentPos = this.get('parent').get('position'),
+        myPos = this.get('position');
+    return new geom.Point(myPos.x + parentPos.x, myPos.y + parentPos.y);
+};
+
 var Snake = cocos.nodes.Node.extend({
     initialVelocity: new geom.Point(-1, 0),
     speed: 60,
@@ -62,6 +68,8 @@ var Snake = cocos.nodes.Node.extend({
             //rect: new geom.Rect(96, 0, 16, 16)
         });
         sprite2.set('position', new geom.Point(0, 0));
+        sprite2.set('absPosition', absPosition);
+        
         sprite2.set('velocity', util.copy(this.get('initialVelocity')));
         body.add(sprite2);
         this.addChild({child: body.item(0)});
@@ -194,6 +202,7 @@ var Snake = cocos.nodes.Node.extend({
         var lastPos = body.last().get('position');
         sprite.set('position', new geom.Point(lastPos.x + 16, 0));
         sprite.set('velocity', this.get('initialVelocity'));
+        sprite.set('absPosition', absPosition);
         body.add(sprite);
         this.addChild({child: body.last()});
     }
