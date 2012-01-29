@@ -94,7 +94,7 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         for (var i=0; i<MAX_FOOD; i++) {
             this.food.push(Food.create());
         }
-        console.log(this.food);
+        // console.log(this.food);
         this.schedule({
             method: this.addFood,
             interval: 3

@@ -21,6 +21,8 @@ var circleOverlap = function(rect1, rect2) {
     var dy = pos1.y - pos2.y;
     var distance = Math.sqrt(dx * dx + dy * dy);
     
+    // console.log(pos1);
+    // console.log(pos2);
     if (distance < rad1 + rad2) {
         // We have overlap
         return true;
@@ -124,12 +126,25 @@ var Player = cocos.nodes.Node.extend({
     testDeathConditions: function() {
         var vel = util.copy(this.get('velocity')),
             playerBox = this.get('boundingBox'),
-            snakeBox = this.get('parent').get('snake').get('boundingBox');
-
-        if (geom.rectOverlapsRect(snakeBox, playerBox)) {
-            if (circleOverlap(snakeBox, playerBox) && !this.dying) {
+            snakeBody = this.get('parent').get('snake').get('body'),
+            snakePos = this.get('parent').get('snake').get('position');
+            
+        var i = 0;
+        var segment = snakeBody.item(i);
+        var segmentBox = null;
+        console.log(snakePos);
+        while(segment !== null) {
+            segmentBox = segment.get('boundingBox');
+            segmentBox.origin.x += snakePos.x;
+            segmentBox.origin.y += snakePos.y;
+            if (circleOverlap(segmentBox, playerBox) && !this.dying) {
+                console.log('die');
                 this.die();
+                break;
             }
+            
+            i += 1;
+            segment = snakeBody.item(i);
         }
 	},
 	

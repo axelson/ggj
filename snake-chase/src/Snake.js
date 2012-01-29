@@ -13,7 +13,7 @@ var Snake = cocos.nodes.Node.extend({
     posToMove: null,
     step: 0,
 
-    init: function() {
+    init: function(opts) {
         Snake.superclass.init.call(this);
 
         var moves = new doublyLinkedList.DoublyLinkedList()
