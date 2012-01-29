@@ -6,11 +6,6 @@ var cocos  = require('cocos2d')   // Import the cocos2d module
   , ccp    = geo.ccp              // Short hand to create points
   , Player   = require('./Player').Player
   , Snake   = require('./Snake').Snake;
-<<<<<<< HEAD
-=======
-
-var PLAYER_SPEED = 10;
->>>>>>> Prevented player from reversing direction. Bounded player within the window.
 
 var KEYS = {
     left: 37,
