@@ -516,7 +516,7 @@ var Player = cocos.nodes.Node.extend({
         // Initialize death frames
         this.deathFrames = Array();
         var texture = cocos.Texture2D.create({
-            file: '/resources/explosion.jpg'
+            file: '/resources/explosion.png'
         });
         
         var frame = null;
@@ -647,7 +647,7 @@ exports.Player = Player;
 __jah__.resources["/resources/bg-tile.jpg"] = {data: __jah__.assetURL + "/resources/bg-tile.jpg", mimetype: "image/jpeg", remote: true};
 __jah__.resources["/resources/cherries.png"] = {data: __jah__.assetURL + "/resources/cherries.png", mimetype: "image/png", remote: true};
 __jah__.resources["/resources/dead.wav"] = {data: __jah__.assetURL + "/resources/dead.wav", mimetype: "audio/x-wav", remote: true};
-__jah__.resources["/resources/explosion.jpg"] = {data: __jah__.assetURL + "/resources/explosion.jpg", mimetype: "image/jpeg", remote: true};
+__jah__.resources["/resources/explosion.png"] = {data: __jah__.assetURL + "/resources/explosion.png", mimetype: "image/png", remote: true};
 __jah__.resources["/resources/next.png"] = {data: __jah__.assetURL + "/resources/next.png", mimetype: "image/png", remote: true};
 __jah__.resources["/resources/pickup.wav"] = {data: __jah__.assetURL + "/resources/pickup.wav", mimetype: "audio/x-wav", remote: true};
 __jah__.resources["/resources/snake-body.png"] = {data: __jah__.assetURL + "/resources/snake-body.png", mimetype: "image/png", remote: true};
