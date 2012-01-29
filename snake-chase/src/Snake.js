@@ -21,36 +21,42 @@ var Snake = cocos.nodes.Node.extend({
         moves.add({
             x: -48,
             y: 0,
+            type: "move",
             vX: 0,
             vY: -1
         });
         moves.add({
             x: -48,
             y: -150,
+            type: "move",
             vX: +1,
             vY: 0
         });
         moves.add({
             x: -10,
             y: -150,
+            type: "move",
             vX: 0,
             vY: +1
         });
         moves.add({
             x: -10,
             y: -30,
+            type: "move",
             vX: -1,
             vY: 0
         });
         moves.add({
             x: -40,
             y: -30,
+            type: "move",
             vX: 0,
             vY: +1
         });
         moves.add({
             x: -40,
             y: 30,
+            type: "move",
             vX: +1,
             vY: 0
         });
@@ -118,6 +124,9 @@ var Snake = cocos.nodes.Node.extend({
             var moves = this.get('moves');
             for(var j=0; j<moves.size() ;j++) {
                 var move = util.copy(moves.item(j));
+                if(move.type !== "move") {
+                    continue;
+                }
                 if(this.isBetween(pos.x, newX, move.x) && this.isBetween(pos.y, newY, move.y)) {
                     console.log("set vel for " + i + " to " + move.vX + ", " + move.vY);
                     // Set new velocity
