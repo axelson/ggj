@@ -4,6 +4,8 @@ var cocos = require('cocos2d'),
 
 var PLAYER_SPEED = 100;
 
+var effectDead = new Audio("/__jah__/resources/dead.wav");
+
 var circleOverlap = function(rect1, rect2) {
     // Get radiuses and approximate the center.
     var rad1 = util.copy(rect1.size.width / 2),
@@ -148,6 +150,18 @@ var Player = cocos.nodes.Node.extend({
         }
 	},
 	
+	playStopEffect: function() {
+	    console.log('stop.play');
+        var snd = new Audio("/__jah__/resources/stop.wav");
+        snd.play();
+    },
+
+	playDeadEffect: function() {
+	    console.log('dead.play');
+        var snd = new Audio("/__jah__/resources/dead.wav");
+        snd.play();
+    },
+                  
 	die: function() {
 	    this.setVelocity(new geom.Point(0, 0));
         this.dying = true;
@@ -170,6 +184,8 @@ var Player = cocos.nodes.Node.extend({
             this.layer.removeLife();
         }
         this.sprite.runAction(animate);
+        
+        this.playDeadEffect();
 	},
 	
 	testBounds: function() {
@@ -180,21 +196,34 @@ var Player = cocos.nodes.Node.extend({
             if (vel.x < 0 && geom.rectGetMinX(box) < 0) {
                 //Flip X velocity
                 vel.x = 0;
+                if (vel.x == 0 && vel.y == 0) {
+                  this.playStopEffect();
+                }
             }
 
             if (vel.x > 0 && geom.rectGetMaxX(box) > winSize.width) {
                 vel.x = 0;
+                if (vel.x == 0 && vel.y == 0) {
+                  this.playStopEffect();
+                }                
             }
 
             if (vel.y < 0 && geom.rectGetMinY(box) < 0) {
                 vel.y *= 0;
+                if (vel.x == 0 && vel.y == 0) {
+                  this.playStopEffect();
+                }
             }
 
             if (vel.y > 0 && geom.rectGetMaxY(box) > winSize.height) {
                 vel.y *= 0;
+                if (vel.x == 0 && vel.y == 0) {
+                  this.playStopEffect();
+                }
             }
 
             this.set('velocity', vel);
+            
         }
 });
 

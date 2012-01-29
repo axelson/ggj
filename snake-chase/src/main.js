@@ -252,6 +252,8 @@ var Menu = cocos.nodes.Layer.extend({
         var scene = cocos.nodes.Scene.create();
         scene.addChild({child: SnakeChase.create({level: 1, points: 0, lives: 3})});
         director.replaceScene(scene);
+        //document.getElementById('title').style = "display: block";
+        $('#title').show();
     }
 });
 
