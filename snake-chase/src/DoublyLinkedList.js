@@ -117,6 +117,20 @@ DoublyLinkedList.prototype = {
     },
 
     /**
+     * Retrieves the last item in the list.
+     * @return {variant} The value in the "data" portion of the last item
+     *      or null if the item doesn't exist.
+     * @method item
+     */
+    last: function(index){
+        //special case: no items in the list yet
+        if (this._length == 0) {
+            return null;
+        }
+        return this._tail.data;
+    },
+
+    /**
      * Removes the item from the given location in the list.
      * @param {int} index The zero-based index of the item to remove.
      * @return {variant} The data in the given position in the list or null if
