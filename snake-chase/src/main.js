@@ -4,6 +4,7 @@ var cocos  = require('cocos2d')   // Import the cocos2d module
   , events = require('events')    // Import the events module
   , geo    = require('geometry')  // Import the geometry module
   , ccp    = geo.ccp              // Short hand to create points
+  , util   = require('util')
   , Player = require('./Player').Player
   , Life = require('./Life').Life
   , Food   = require('./Food').Food
@@ -176,6 +177,45 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     }
 });
 
+var Menu = cocos.nodes.Layer.extend({
+    init: function() {
+        Menu.superclass.init.call(this);
+        
+        var s = cocos.Director.get('sharedDirector').get('winSize');
+        
+        var label = cocos.nodes.Label.create({string: 'Snake Chase!', fontSize: 32});
+        this.addChild({child: label, z:1});
+        label.set('position', geo.ccp(s.width / 2 - 100, 30));
+        label.set('position', geo.ccp(s.width / 2, s.height / 4));
+        
+        this.set('isMouseEnabled', true);
+        
+        
+        var itemPlay = cocos.nodes.MenuItemImage.create({
+            normalImage: '/resources/start.png',
+            selectedImage: '/resources/start.png',
+            callback: util.callback(this, 'playCallback')
+        });
+        var playLabel = cocos.nodes.Label.create({string: 'Play!', fontSize: 16});
+        playLabel.set('anchorPoint', new geo.Point(0, 0));
+        
+        var menu = cocos.nodes.Menu.create({
+            items: [itemPlay],
+        });
+        itemPlay.set('position', geo.ccp(s.width / 2, s.height / 2));
+        menu.set('position', ccp(0, 0));
+        this.addChild({child: menu, z: 1});
+    },
+    
+    playCallback: function() {
+        console.log('Play!');
+        var director = cocos.Director.get('sharedDirector')
+        var scene = cocos.nodes.Scene.create();
+        scene.addChild({child: SnakeChase.create()});
+        director.replaceScene(scene);
+    }
+})
+
 /**
  * Entry point for the application
  */
@@ -194,12 +234,12 @@ exports.main = function () {
         var scene = cocos.nodes.Scene.create()
 
         // Add our layer to the scene
-        scene.addChild({ child: SnakeChase.create() })
+        scene.addChild({ child: Menu.create() })
 
         // Run the scene
         director.replaceScene(scene)
     })
 
     // Preload our assets
-    director.runPreloadScene()
+    director.runPreloadScene();
 }
