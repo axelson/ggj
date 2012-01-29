@@ -23,68 +23,68 @@ var Snake = cocos.nodes.Node.extend({
             y: 0,
             type: "grow"
         });
-        moves.add({
-            x: -96,
-            y: 0,
-            type: "grow"
-        });
+        //moves.add({
+        //    x: -96,
+        //    y: 0,
+        //    type: "grow"
+        //});
         //moves.add({
         //    x: -144,
         //    y: 0,
         //    type: "stop"
         //});
         moves.add({
-            x: -144,
+            x: -96,
             y: 0,
             type: "move",
             vX: 0,
             vY: -1
         });
         moves.add({
-            x: -144,
+            x: -96,
             y: -48,
             type: "grow"
         });
         moves.add({
-            x: -144,
-            y: -96,
+            x: -96,
+            y: -144,
             type: "stop"
         });
-        moves.add({
-            x: -48,
-            y: -150,
-            type: "move",
-            vX: +1,
-            vY: 0
-        });
-        moves.add({
-            x: -10,
-            y: -150,
-            type: "move",
-            vX: 0,
-            vY: +1
-        });
-        moves.add({
-            x: -10,
-            y: -30,
-            type: "move",
-            vX: -1,
-            vY: 0
-        });
-        moves.add({
-            x: -40,
-            y: -30,
-            type: "move",
-            vX: 0,
-            vY: +1
-        });
-        moves.add({
-            x: -40,
-            y: 30,
-            type: "move",
-            vX: +1,
-            vY: 0
-        });
+        //moves.add({
+        //    x: -48,
+        //    y: -150,
+        //    type: "move",
+        //    vX: +1,
+        //    vY: 0
+        //});
+        //moves.add({
+        //    x: -10,
+        //    y: -150,
+        //    type: "move",
+        //    vX: 0,
+        //    vY: +1
+        //});
+        //moves.add({
+        //    x: -10,
+        //    y: -30,
+        //    type: "move",
+        //    vX: -1,
+        //    vY: 0
+        //});
+        //moves.add({
+        //    x: -40,
+        //    y: -30,
+        //    type: "move",
+        //    vX: 0,
+        //    vY: +1
+        //});
+        //moves.add({
+        //    x: -40,
+        //    y: 30,
+        //    type: "move",
+        //    vX: +1,
+        //    vY: 0
+        //});
         this.set('moves', moves);
 
         var body = new doublyLinkedList.DoublyLinkedList()
@@ -204,6 +204,7 @@ var Snake = cocos.nodes.Node.extend({
             this.get('body').item(i).set('position', pos);
             var step2 = util.copy(this.get('step'));
             if(step2 % 10 == 0) {
+                this.printMoves();
                 //console.log("step: " + step2 + " i: " + i + " newX: " + newX + " newY: "+ newY);
             }
         }
@@ -303,6 +304,15 @@ var Snake = cocos.nodes.Node.extend({
         }
 
     },
+
+    printMoves: function() {
+        var moves = this.get('moves');
+        for(var i=0; i<moves.size() ; i++) {
+            var move = util.copy(moves.item(i));
+            console.log(i + " move type: " + move.type + " loc: " + move.x + ", " + move.y);
+        }
+    },
+
     addSection: function() {
         //var body = util.copy(this.get('body'));
         var body = this.get('body');
