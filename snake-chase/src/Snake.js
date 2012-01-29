@@ -227,6 +227,24 @@ var Snake = cocos.nodes.Node.extend({
         for(var i=1; i<body.size() ; i++) {
             body.item(i).set('velocity', new geom.Point(0, 0));
         }
+
+        var sprite = cocos.nodes.Sprite.create({
+            file: '/resources/snake-body.png',
+            //rect: new geom.Rect(64, 0, 16, 16)
+        });
+
+
+        var headPos = util.copy(body.item(0).get('position'));
+        var headVel = util.copy(body.item(0).get('velocity'));
+        var xDir = Math.abs(headVel.x);
+        var yDir = Math.abs(headVel.y);
+        var newX = headPos.x - 16*headVel.x;
+        var newY = headPos.y - 16*headVel.y;
+        var newPos = new geom.Point(newX, newY);
+        sprite.set('position', newPos);
+        sprite.set('velocity', headVel);
+        body.addAt(1, sprite);
+        this.addChild({child: body.item(1)});
     },
 
     addSection: function() {
