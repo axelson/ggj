@@ -29,7 +29,7 @@
     </head> 
     <body> 
        <audio autoplay="autoplay">
-            <source src="/resources/snake-chase-bg.mp3" type="audio/mp3" />
+            <source src="assets/resources/snake-chase-bg.mp3" type="audio/mp3" />
             Your browser does not support the audio tag.
        </audio>
        
