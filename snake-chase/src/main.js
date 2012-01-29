@@ -28,19 +28,21 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     player: null,
     snake: null,
     food: null,
-    lives: null,
     tick: null,
     timeLabel: null,
+    level: null,
     
-    init: function () {
+    init: function (opts) {
         // You must always call the super class version of init
+        this.level = opts.level;
+        
         SnakeChase.superclass.init.call(this);
 
         this.set('isKeyboardEnabled', true);
         
         // Set up lives on the right side.
         this.lives = Array();
-        this.resetLives();
+        this.resetLives(opts.lives);
         
         // Set up timer on the left side.
         var timeLabel = cocos.nodes.Label.create({string: "Time: 0:00", fontSize: 16});
@@ -54,6 +56,13 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
             method: this.updateTimer,
             interval: 1
         });
+        
+        // Set up level label
+        var winSize = cocos.Director.get('sharedDirector').get('winSize');
+        var levelLabel = cocos.nodes.Label.create({string: "Level: " + this.level, fontSize: 16});
+        levelLabel.set('anchorPoint', new geo.Point(0, 0));
+        levelLabel.set('position', new geo.Point(winSize.width / 2, 10));
+        this.addChild({child: levelLabel});
         
         var player = Player.create();
         player.set('position', new geo.Point(160, 250));
@@ -125,16 +134,18 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
             if (this.food.array[i] == food) {
                 this.food.array[i].visible = false;
                 this.removeChild({child: this.food.array[i]});
+                // Test code: commented out for now.
+                // this.win();
             }
         }
     },
     
-    resetLives: function() {
+    resetLives: function(lives) {
         // Get size of canvas.
         var s = cocos.Director.get('sharedDirector.winSize');
         
         var life = null;
-        for (var i=0; i<3; i++) {
+        for (var i=0; i<lives; i++) {
             life = Life.create();
             life.set('position', new geo.Point(s.width - 20 * (i + 1), 20));
             this.addChild({child: life});
@@ -176,6 +187,19 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
             scene.addChild({child: GameOver.create()});
             director.replaceScene(scene);
         }
+    },
+    
+    win: function() {
+        var director = cocos.Director.get('sharedDirector');
+        var scene = cocos.nodes.Scene.create();
+        var next = NextLevel.create({
+            nextLevel: this.level + 1,
+            time: this.tick,
+            score: 0,
+            lives: this.lives.length
+        });
+        scene.addChild({child: next});
+        director.replaceScene(scene);
     }
 });
 
@@ -208,9 +232,9 @@ var Menu = cocos.nodes.Layer.extend({
     
     playCallback: function() {
         console.log('Play!');
-        var director = cocos.Director.get('sharedDirector')
+        var director = cocos.Director.get('sharedDirector');
         var scene = cocos.nodes.Scene.create();
-        scene.addChild({child: SnakeChase.create()});
+        scene.addChild({child: SnakeChase.create({level: 1, lives: 3})});
         director.replaceScene(scene);
     }
 });
@@ -246,7 +270,56 @@ var GameOver = cocos.nodes.Layer.extend({
         console.log('Play!');
         var director = cocos.Director.get('sharedDirector')
         var scene = cocos.nodes.Scene.create();
-        scene.addChild({child: SnakeChase.create()});
+        scene.addChild({child: SnakeChase.create({level: 1, lives: 3})});
+        director.replaceScene(scene);
+    }
+});
+
+var NextLevel = cocos.nodes.Layer.extend({
+    time: null,
+    score: null,
+    nextLevel: null,
+    lives: null,
+    
+    init: function(opts) {
+        NextLevel.superclass.init.call(this);
+        this.time = opts.time;
+        this.score = opts.score;
+        this.nextLevel = opts.nextLevel;
+        this.lives = opts.lives;
+        console.log(opts.lives);
+        var s = cocos.Director.get('sharedDirector').get('winSize');
+        
+        var msg = 'You finished in ' + this.time + ' seconds!';
+        var label = cocos.nodes.Label.create({string: msg, fontSize: 32});
+        this.addChild({child: label, z:1});
+        label.set('position', geo.ccp(s.width / 2 - 100, 30));
+        label.set('position', geo.ccp(s.width / 2, s.height / 4));
+        
+        this.set('isMouseEnabled', true);
+        
+        var itemPlay = cocos.nodes.MenuItemImage.create({
+            normalImage: '/resources/next.png',
+            selectedImage: '/resources/next.png',
+            callback: util.callback(this, 'nextCallback')
+        });
+        
+        var menu = cocos.nodes.Menu.create({
+            items: [itemPlay],
+        });
+        itemPlay.set('position', geo.ccp(s.width / 2, s.height / 2));
+        menu.set('position', ccp(0, 0));
+        this.addChild({child: menu, z: 1});
+    },
+    
+    nextCallback: function() {
+        console.log('Play!');
+        var director = cocos.Director.get('sharedDirector')
+        var scene = cocos.nodes.Scene.create();
+        scene.addChild({child: SnakeChase.create({
+            level: this.nextLevel,
+            lives: this.lives
+        })});
         director.replaceScene(scene);
     }
 });
