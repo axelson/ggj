@@ -16,6 +16,8 @@ var KEYS = {
     down: 40
 };
 
+var MAX_FOOD = 5;
+
 var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     /**
      * @class Initial application layer
@@ -47,7 +49,12 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         this.addChild({child: snake});
         this.set('snake', snake);
         
-        this.food = [];
+        this.food = new BArray();
+        var food = null;
+        for (var i=0; i<MAX_FOOD; i++) {
+            this.food.push(Food.create());
+        }
+        console.log(this.food);
         this.schedule({
             method: this.addFood,
             interval: 3
@@ -62,19 +69,32 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         this.player.setVelocity(new geo.Point(0, 0));
     },
     
-    addFood: function(food) {
-        if (this.food.length < 5) {
-            console.log('add food');
-            var food = Food.create();
-
-            // Generate random location within bounds.
-            var winSize = cocos.Director.get('sharedDirector').get('winSize');
-            // We add and subtract 16 to compensate for the size of the food.
-            var x = Math.floor(16 + Math.random() * (winSize.width - 16));
-            var y = Math.floor(16 + Math.random() * (winSize.height - 16));
-            food.set('position', new geo.Point(x, y));
-            this.food.push(food);
-            this.addChild({child: food});
+    addFood: function() {
+        var food = null;
+        for(var i=0; i<MAX_FOOD; i++) {
+            food = this.food.array[i];
+            if (!food.visible) {
+                // Generate random location within bounds.
+                var winSize = cocos.Director.get('sharedDirector').get('winSize');
+                // We add and subtract 16 to compensate for the size of the food.
+                var x = Math.floor(16 + Math.random() * (winSize.width - 16));
+                var y = Math.floor(16 + Math.random() * (winSize.height - 16));
+                food.set('position', new geo.Point(x, y));
+                this.food.push(food);
+                food.visible = true;
+                this.addChild({child: food});
+                break;
+            }
+        }
+    },
+    
+    removeFood: function(food) {
+        //Find the food to be removed.
+        for(var i=0; i<this.food.array.length; i++) {
+            if (this.food.array[i] == food) {
+                this.food.array[i].visible = false;
+                this.removeChild({child: this.food.array[i]});
+            }
         }
     },
     

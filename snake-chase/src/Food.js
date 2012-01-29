@@ -2,6 +2,8 @@ var cocos = require('cocos2d');
 var geom = require('geometry');
 
 var Food = cocos.nodes.Node.extend({
+    visible: false,
+    
     init: function() {
         Food.superclass.init.call(this);
 
@@ -11,6 +13,21 @@ var Food = cocos.nodes.Node.extend({
         });
         this.addChild({child: cherry});
         this.set('contentSize', cherry.get('contentSize'));
+        this.schedule({
+            method: this.update
+        })
+    },
+    
+    update: function(dt) {
+        // We check if someone is consuming us.
+        if (this.visible) {
+            var foodBox = this.get('boundingBox'),
+                playerBox = this.get('parent').get('player').get('boundingBox');
+
+            if (geom.rectOverlapsRect(foodBox, playerBox)) {
+                this.get('parent').removeFood(this);
+            }
+        }
     }
 });
 
