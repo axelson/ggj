@@ -66,8 +66,13 @@ var Snake = cocos.nodes.Node.extend({
             //console.log("on " + i);
             var pos = util.copy(body.item(i).get('position'));
             var vel = util.copy(body.item(i).get('velocity'));
-            pos.x += dt * -vel.x;
-            pos.y += dt * -vel.y;
+            if(new Date().getTime() > this.get('startTime').getTime() + 800) {
+                pos.x += dt * vel.x;
+                pos.y += dt * vel.y;
+            } else {
+                pos.x += dt * -vel.x;
+                pos.y += dt * -vel.y;
+            }
             this.get('body').item(i).set('position', pos);
         }
     },
