@@ -107,6 +107,18 @@ var Snake = cocos.nodes.Node.extend({
         this.get('body').item(1).set('position', posTest3);
         //this.set('position', pos);
 //        this.set('head', test);
+    },
+
+    addSection: function() {
+        var body = util.copy(this.get('body'));
+
+        var sprite = cocos.nodes.Sprite.create({
+            file: '/resources/sprites.png',
+            rect: new geom.Rect(64, 0, 16, 16)
+        });
+        sprite.set('position', new geom.Point(32, 0));
+        body.add(sprite);
+        this.addChild({child: body.last()});
     }
 });
 
