@@ -4,7 +4,8 @@ var util = require('util');
 var doublyLinkedList = require('./DoublyLinkedList');
 
 var Snake = cocos.nodes.Node.extend({
-    initialVelocity: new geom.Point(60, 0),
+    initialVelocity: new geom.Point(1, 0),
+    speed: 60,
     body: null,
     moves: null,
     head: null,
@@ -15,47 +16,29 @@ var Snake = cocos.nodes.Node.extend({
     init: function() {
         Snake.superclass.init.call(this);
 
-        //var spriteHead = cocos.nodes.Sprite.create({
-        //    file: '/resources/sprites.png',
-        //    rect: new geom.Rect(96, 0, 16, 16)
-        //});
-        //var sprite = cocos.nodes.Sprite.create({
-        //    file: '/resources/sprites.png',
-        //    rect: new geom.Rect(64, 0, 16, 16)
-        //});
-
-        //sprite.set('anchorPoint', new geom.Point(0, 0));
-        //spriteHead.set('anchorPoint', new geom.Point(-1, 0));
-        //this.addChild({child: sprite});
-        //this.addChild({child: spriteHead});
-        //this.set('contentSize', sprite.get('contentSize'));
-        //this.set('contentSize', spriteHead.get('contentSize'));
-
-        //this.set('head', spriteHead);
-
         var moves = new doublyLinkedList.DoublyLinkedList()
         moves.add({
             x: -48,
             y: 0,
             vX: 0,
-            vY: 60
+            vY: 1
         });
         moves.add({
             x: -48,
             y: -150,
-            vX: -60,
+            vX: -1,
             vY: 0
         });
         moves.add({
             x: -10,
             y: -150,
             vX: 0,
-            vY: -60
+            vY: -1
         });
         moves.add({
             x: -10,
             y: -30,
-            vX: 60,
+            vX: 1,
             vY: 0
         });
         this.set('moves', moves);
@@ -66,7 +49,7 @@ var Snake = cocos.nodes.Node.extend({
             rect: new geom.Rect(96, 0, 16, 16)
         });
         sprite2.set('position', new geom.Point(0, 0));
-        sprite2.set('velocity', new geom.Point(60, 0));
+        sprite2.set('velocity', new geom.Point(1, 0));
         body.add(sprite2);
         this.addChild({child: body.item(0)});
 
@@ -112,8 +95,9 @@ var Snake = cocos.nodes.Node.extend({
             //console.log("on " + i + " at " + pos.x + ", " + pos.y);
 
             // Calculate the position if keep moving forward
-            var dX = dt * -vel.x;
-            var dY = dt * -vel.y;
+            var speed = util.copy(this.get('speed'));
+            var dX = dt * -vel.x*speed;
+            var dY = dt * -vel.y*speed;
             var newX = pos.x + dX;
             var newY = pos.y + dY;
             //console.log(pos.x + " " + pos.y);
@@ -127,7 +111,13 @@ var Snake = cocos.nodes.Node.extend({
                     body.item(i).set('velocity', new geom.Point(move.vX,move.vY));
 
                     // Give leftover velocity to the correct place
-                    if(i != 0) {
+                    if(i == 0) {
+                        dX += dY - Math.abs(pos.y - move.y);
+                        newX = move.x + (dX*move.x/this.get('speed'));
+
+                        dY += dX - Math.abs(pos.x - move.x);
+                        newY = move.y + (dY*move.y/this.get('speed'));
+                    } else {
                         var prevPos = body.item(i - 1).get('position');
                     }
                     if(move.vX != 0) {
