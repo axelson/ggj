@@ -135,6 +135,13 @@ var Snake = cocos.nodes.Node.extend({
                             this.grow();
                             moves.remove(j);
                         }
+                        if(move.type === "start") {
+                            var headVel = util.copy(body.item(0).get('velocity'));
+                            for(var k=1; k<body.size() ; k++) {
+                                body.item(k).set('velocity', headVel);
+                            }
+                            moves.remove(j);
+                        }
                         continue;
                     }
                     console.log("set vel for " + i + " to " + move.vX + ", " + move.vY);
@@ -204,13 +211,22 @@ var Snake = cocos.nodes.Node.extend({
     grow: function() {
         console.log("Growing!");
         var moves = this.get('moves');
+        var body = this.get('body');
+        //moves.add({
+        //    x: -48,
+        //    y: 0,
+        //    type: "grow"
+        //});
         moves.add({
-            x: -48,
+            x: -64,
             y: 0,
             type: "start"
         });
-
         this.set('moves', moves);
+
+        for(var i=1; i<body.size() ; i++) {
+            body.item(i).set('velocity', new geom.Point(0, 0));
+        }
     },
 
     addSection: function() {
