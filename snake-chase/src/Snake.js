@@ -127,18 +127,36 @@ var Snake = cocos.nodes.Node.extend({
                     body.item(i).set('velocity', new geom.Point(move.vX,move.vY));
 
                     // Give leftover velocity to the correct place
-                    if(move.vX > 0) {
+                    if(i != 0) {
+                        var prevPos = body.item(i - 1).get('position');
+                    }
+                    if(move.vX != 0) {
                         dX += dY - Math.abs(pos.y - move.y);
-                        dY = move.y - pos.y;
-                    } else if(move.vY > 0) {
+                        if(i != 0) {
+                            newX = prevPos.x - 16*this.sign(pos.y, move.y);
+                        } else {
+                            newX = move.x + dX;
+                            console.log("newX: " + newX + " move.X: " + move.x);
+                        }
+                        //newY = pos.y + dY;
+                        console.log("set y to " + move.y + " newX: " + newX + " dX: " + dX);
+                        newY = move.y;
+                    } else if(move.vY != 0) {
                         console.log("moving in y direction");
-                        dX = move.x - pos.x;
                         dY += dX - Math.abs(pos.x - move.x);
+                        //Ensure correct distance under next segment
+                        if(i != 0) {
+                            newY = prevPos.y + 16*this.sign(pos.x, move.x);
+                        } else {
+                            newY = move.y + dY;
+                        }
+                        newX = move.x;
+                    } else {
+                        console.log("Not handled");
                     }
 
                     // Calculate new position instead of moving forward
-                    newX = pos.x + dX;
-                    newY = pos.y + dY;
+                    //newY = pos.y + dY;
                     console.log("dX: " + dX + " dY: " + dY + " newX: "+ newX);
 
                     // If this is the last segment to reach the move, remove it
@@ -155,6 +173,10 @@ var Snake = cocos.nodes.Node.extend({
             pos.x = newX;
             pos.y = newY;
             this.get('body').item(i).set('position', pos);
+            var step2 = util.copy(this.get('step'));
+            if(step2 % 10 == 0) {
+                console.log("i: " + i + "newX: " + newX + " newY: "+ newY);
+            }
         }
 
         var step = util.copy(this.get('step'));
@@ -176,6 +198,16 @@ var Snake = cocos.nodes.Node.extend({
             return true;
         } else {
             return false;
+        }
+    },
+
+    sign: function(foo, bar) {
+        if(foo - bar < 0) {
+            console.log("sign 1");
+            return -1;
+        } else {
+            console.log("sign -1");
+            return 1;
         }
     },
 
