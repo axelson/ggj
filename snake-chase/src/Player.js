@@ -45,18 +45,18 @@ var Player = cocos.nodes.Node.extend({
         this.set('position', pos);
         this.testBounds();
         this.testDeathConditions();
-        },
+    },
 
-        testDeathConditions: function() {
-            var vel = util.copy(this.get('velocity')),
-                    playerBox = this.get('boundingBox'),
-                    snakeBox = this.get('parent').get('snake').get('boundingBox');
+    testDeathConditions: function() {
+        var vel = util.copy(this.get('velocity')),
+            playerBox = this.get('boundingBox'),
+            snakeBox = this.get('parent').get('snake').get('boundingBox');
 
-            if (geom.rectOverlapsRect(snakeBox, playerBox)) {
-                        var deaths = parseInt($('#death-count').html());
-                        $('#death-count').html(deaths + 1);
-                        alert("you lose");
-                }
+        if (geom.rectOverlapsRect(snakeBox, playerBox)) {
+                var deaths = parseInt($('#death-count').html());
+                $('#death-count').html(deaths + 1);
+                alert("you lose");
+        }
 	},
 	
 	testBounds: function() {
@@ -64,24 +64,24 @@ var Player = cocos.nodes.Node.extend({
             box = this.get('boundingBox'),
             winSize = cocos.Director.get('sharedDirector').get('winSize');
 
-                if (vel.x < 0 && geom.rectGetMinX(box) < 0) {
-                        //Flip X velocity
-                        vel.x = 0;
-                }
+            if (vel.x < 0 && geom.rectGetMinX(box) < 0) {
+                //Flip X velocity
+                vel.x = 0;
+            }
 
-                if (vel.x > 0 && geom.rectGetMaxX(box) > winSize.width) {
-                        vel.x = 0;
-                }
+            if (vel.x > 0 && geom.rectGetMaxX(box) > winSize.width) {
+                vel.x = 0;
+            }
 
-                if (vel.y < 0 && geom.rectGetMinY(box) < 0) {
-                        vel.y *= 0;
-                }
+            if (vel.y < 0 && geom.rectGetMinY(box) < 0) {
+                vel.y *= 0;
+            }
 
-                if (vel.y > 0 && geom.rectGetMaxY(box) > winSize.height) {
-                        vel.y *= 0;
-                }
+            if (vel.y > 0 && geom.rectGetMaxY(box) > winSize.height) {
+                vel.y *= 0;
+            }
 
-                this.set('velocity', vel);
+            this.set('velocity', vel);
         }
 });
 
