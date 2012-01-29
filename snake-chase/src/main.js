@@ -9,13 +9,6 @@ var cocos  = require('cocos2d')   // Import the cocos2d module
   , Food   = require('./Food').Food
   , Snake  = require('./Snake').Snake;
 
-var locations = {
-  food: [
-      {x:100, y: 120},
-      {x:130, y: 105}
-  ]
-};
-
 var KEYS = {
     left: 37,
     up: 38,
@@ -33,6 +26,7 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     snake: null,
     food: null,
     lives: null,
+    
     init: function () {
         // You must always call the super class version of init
         SnakeChase.superclass.init.call(this);
@@ -54,17 +48,10 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         this.set('snake', snake);
         
         this.food = [];
-        var loc = null;
-        var cherry = null;
-        
-        for(var i=0; i<locations.food.length; i++) {
-            loc = locations.food[i];
-            cherry = Food.create();
-            // console.log(loc);
-            cherry.set('position', new geo.Point(loc.x, loc.y));
-            this.addChild({child: cherry});
-            this.food.push(cherry);
-        }
+        this.schedule({
+            method: this.addFood,
+            interval: 3
+        })
     },
     
     reset: function() {
@@ -73,6 +60,22 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         this.player.set('position', new geo.Point(160, 250));
         this.snake.set('position', new geo.Point(280, 250));
         this.player.setVelocity(new geo.Point(0, 0));
+    },
+    
+    addFood: function(food) {
+        if (this.food.length < 5) {
+            console.log('add food');
+            var food = Food.create();
+
+            // Generate random location within bounds.
+            var winSize = cocos.Director.get('sharedDirector').get('winSize');
+            // We add and subtract 16 to compensate for the size of the food.
+            var x = Math.floor(16 + Math.random() * (winSize.width - 16));
+            var y = Math.floor(16 + Math.random() * (winSize.height - 16));
+            food.set('position', new geo.Point(x, y));
+            this.food.push(food);
+            this.addChild({child: food});
+        }
     },
     
     resetLives: function() {
