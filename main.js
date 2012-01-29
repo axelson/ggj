@@ -24,6 +24,242 @@ exports.Background = Background;
 }, mimetype: "application/javascript", remote: false}; // END: /Background.js
 
 
+__jah__.resources["/DoublyLinkedList.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*
+ * Doubly Linked List implementation in JavaScript
+ * Copyright (c) 2009 Nicholas C. Zakas
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
+/**
+ * A linked list implementation in JavaScript.
+ * @class DoublyLinkedList
+ * @constructor
+ */
+function DoublyLinkedList() {
+
+    /**
+     * Pointer to first item in the list.
+     * @property _head
+     * @type Object
+     * @private
+     */
+    this._head = null;
+
+    /**
+     * Pointer to last item in the list.
+     * @property _tail
+     * @type Object
+     * @private
+     */
+    this._tail = null;
+
+    /**
+     * The number of items in the list.
+     * @property _length
+     * @type int
+     * @private
+     */
+    this._length = 0;
+}
+
+DoublyLinkedList.prototype = {
+
+    //restore constructor
+    constructor: DoublyLinkedList,
+
+    /**
+     * Appends some data to the end of the list. This method traverses
+     * the existing list and places the value at the end in a new item.
+     * @param {variant} data The data to add to the list.
+     * @return {Void}
+     * @method add
+     */
+    add: function (data){
+
+        //create a new item object, place data in
+        var node = {
+                data: data,
+                next: null,
+                prev: null
+            };
+
+        //special case: no items in the list yet
+        if (this._length == 0) {
+            this._head = node;
+            this._tail = node;
+        } else {
+
+            //attach to the tail node
+            this._tail.next = node;
+            node.prev = this._tail;
+            this._tail = node;
+        }
+
+        //don't forget to update the count
+        this._length++;
+
+    },
+
+    /**
+     * Retrieves the data in the given position in the list.
+     * @param {int} index The zero-based index of the item whose value
+     *      should be returned.
+     * @return {variant} The value in the "data" portion of the given item
+     *      or null if the item doesn't exist.
+     * @method item
+     */
+    item: function(index){
+
+        //check for out-of-bounds values
+        if (index > -1 && index < this._length){
+            var current = this._head,
+                i = 0;
+
+            while(i++ < index){
+                current = current.next;
+            }
+
+            return current.data;
+        } else {
+            return null;
+        }
+    },
+
+    /**
+     * Retrieves the last item in the list.
+     * @return {variant} The value in the "data" portion of the last item
+     *      or null if the item doesn't exist.
+     * @method item
+     */
+    last: function(index){
+        //special case: no items in the list yet
+        if (this._length == 0) {
+            return null;
+        }
+        return this._tail.data;
+    },
+
+    /**
+     * Removes the item from the given location in the list.
+     * @param {int} index The zero-based index of the item to remove.
+     * @return {variant} The data in the given position in the list or null if
+     *      the item doesn't exist.
+     * @method remove
+     */
+    remove: function(index){
+
+        //check for out-of-bounds values
+        if (index > -1 && index < this._length){
+
+            var current = this._head,
+                i = 0;
+
+            //special case: removing first item
+            if (index === 0){
+                this._head = current.next;
+
+                /*
+                 * If there's only one item in the list and you remove it,
+                 * then this._head will be null. In that case, you should
+                 * also set this._tail to be null to effectively destroy
+                 * the list. Otherwise, set the previous pointer on the new
+                 * this._head to be null.
+                 */
+                if (!this._head){
+                    this._tail = null;
+                } else {
+                    this._head.prev = null;
+                }
+
+            //special case: removing last item
+            } else if (index === this._length -1){
+                current = this._tail;
+                this._tail = current.prev;
+                this._tail.next = null;
+            } else {
+
+                //find the right location
+                while(i++ < index){
+                    current = current.next;
+                }
+
+                //skip over the item to remove
+                current.prev.next = current.next;
+            }
+
+            //decrement the length
+            this._length--;
+
+            //return the value
+            return current.data;
+
+        } else {
+            return null;
+        }
+
+
+    },
+
+   /**
+     * Returns the number of items in the list.
+     * @return {int} The number of items in the list.
+     * @method size
+     */
+    size: function(){
+        return this._length;
+    },
+
+    /**
+     * Converts the list into an array.
+     * @return {Array} An array containing all of the data in the list.
+     * @method toArray
+     */
+    toArray: function(){
+        var result = [],
+            current = this._head;
+
+        while(current){
+            result.push(current.data);
+            current = current.next;
+        }
+
+        return result;
+    },
+
+    /**
+     * Converts the list into a string representation.
+     * @return {String} A string representation of the list.
+     * @method toString
+     */
+    toString: function(){
+        return this.toArray().toString();
+    }
+};
+
+
+exports.DoublyLinkedList = DoublyLinkedList;
+
+}, mimetype: "application/javascript", remote: false}; // END: /DoublyLinkedList.js
+
+
 __jah__.resources["/Food.js"] = {data: function (exports, require, module, __filename, __dirname) {
 var cocos = require('cocos2d');
 var geom = require('geometry');
@@ -341,6 +577,8 @@ var Menu = cocos.nodes.Layer.extend({
         var scene = cocos.nodes.Scene.create();
         scene.addChild({child: SnakeChase.create({level: 1, points: 0, lives: 3})});
         director.replaceScene(scene);
+        //document.getElementById('title').style = "display: block";
+        $('#title').show();
     }
 });
 
@@ -468,6 +706,8 @@ var cocos = require('cocos2d'),
 
 var PLAYER_SPEED = 100;
 
+var effectDead = new Audio("/__jah__/resources/dead.wav");
+
 var circleOverlap = function(rect1, rect2) {
     // Get radiuses and approximate the center.
     var rad1 = util.copy(rect1.size.width / 2),
@@ -498,6 +738,7 @@ var Player = cocos.nodes.Node.extend({
     dying: false,
     deathFrames: null,
     sprite: null,
+    flipped: false,
     
     init: function() {
         Player.superclass.init.call(this);
@@ -546,6 +787,14 @@ var Player = cocos.nodes.Node.extend({
             // Prevent reverse
             if ((vel.x == 0 || vel.x != vector.x * -1) &&
                     (vel.y == 0 || vel.y != vector.y * -1)) {
+                if ((vector.x < 0 && !this.flipped) || (vector.x > 0 && this.flipped) ) {
+                    // console.log('flip');
+                    this.flipped = !this.flipped;
+                    var flip = cocos.actions.FlipX.create({
+                        flipX: this.flipped
+                    });
+                    this.sprite.runAction(flip);
+                }
                 this.set('velocity', vector);
             }
         }
@@ -588,22 +837,33 @@ var Player = cocos.nodes.Node.extend({
         }
 	},
 	
+	playStopEffect: function() {
+	    console.log('stop.play');
+        var snd = new Audio("/__jah__/resources/stop.wav");
+        snd.play();
+    },
+
+	playDeadEffect: function() {
+	    console.log('dead.play');
+        var snd = new Audio("/__jah__/resources/dead.wav");
+        snd.play();
+    },
+                  
 	die: function() {
 	    this.setVelocity(new geom.Point(0, 0));
         this.dying = true;
-        console.log(this.deathFrames);
+        // console.log(this.deathFrames);
         var animation = cocos.Animation.create({
             frames: this.deathFrames,
             delay: 0.1
         });
-        console.log(animation);
+        // console.log(animation);
         var animate = cocos.actions.Animate.create({
             duration: 2.0,
             animation: animation
         });
-        console.log(animate);
+        // console.log(animate);
         animate.startWithTarget(this);
-        console.log(animate);
         animate.layer = this.get('parent');
         // This function will be called when the animation is done.
         animate.stop = function() {
@@ -611,6 +871,8 @@ var Player = cocos.nodes.Node.extend({
             this.layer.removeLife();
         }
         this.sprite.runAction(animate);
+        
+        this.playDeadEffect();
 	},
 	
 	testBounds: function() {
@@ -621,21 +883,34 @@ var Player = cocos.nodes.Node.extend({
             if (vel.x < 0 && geom.rectGetMinX(box) < 0) {
                 //Flip X velocity
                 vel.x = 0;
+                if (vel.x == 0 && vel.y == 0) {
+                  this.playStopEffect();
+                }
             }
 
             if (vel.x > 0 && geom.rectGetMaxX(box) > winSize.width) {
                 vel.x = 0;
+                if (vel.x == 0 && vel.y == 0) {
+                  this.playStopEffect();
+                }                
             }
 
             if (vel.y < 0 && geom.rectGetMinY(box) < 0) {
                 vel.y *= 0;
+                if (vel.x == 0 && vel.y == 0) {
+                  this.playStopEffect();
+                }
             }
 
             if (vel.y > 0 && geom.rectGetMaxY(box) > winSize.height) {
                 vel.y *= 0;
+                if (vel.x == 0 && vel.y == 0) {
+                  this.playStopEffect();
+                }
             }
 
             this.set('velocity', vel);
+            
         }
 });
 
@@ -658,32 +933,206 @@ __jah__.resources["/resources/start.png"] = {data: __jah__.assetURL + "/resource
 __jah__.resources["/resources/stop.wav"] = {data: __jah__.assetURL + "/resources/stop.wav", mimetype: "audio/x-wav", remote: true};
 __jah__.resources["/resources/title.png"] = {data: __jah__.assetURL + "/resources/title.png", mimetype: "image/png", remote: true};
 __jah__.resources["/resources/try-again.png"] = {data: __jah__.assetURL + "/resources/try-again.png", mimetype: "image/png", remote: true};
-__jah__.resources["/resources/turtle-left.png"] = {data: __jah__.assetURL + "/resources/turtle-left.png", mimetype: "image/png", remote: true};
-__jah__.resources["/resources/turtle-right.png"] = {data: __jah__.assetURL + "/resources/turtle-right.png", mimetype: "image/png", remote: true};
 __jah__.resources["/resources/turtle.png"] = {data: __jah__.assetURL + "/resources/turtle.png", mimetype: "image/png", remote: true};
 __jah__.resources["/Snake.js"] = {data: function (exports, require, module, __filename, __dirname) {
 var cocos = require('cocos2d');
 var geom = require('geometry');
+var util = require('util');
+var doublyLinkedList = require('./DoublyLinkedList');
 
 var Snake = cocos.nodes.Node.extend({
+    initialVelocity: new geom.Point(-1, 0),
+    speed: 60,
+    body: null,
+    moves: null,
+    head: null,
+    startTime: null,
+    posToMove: null,
+    step: 0,
+
     init: function() {
         Snake.superclass.init.call(this);
 
-        var spriteHead = cocos.nodes.Sprite.create({
+        var moves = new doublyLinkedList.DoublyLinkedList()
+
+        moves.add({
+            x: -48,
+            y: 0,
+            vX: 0,
+            vY: -1
+        });
+        moves.add({
+            x: -48,
+            y: -150,
+            vX: +1,
+            vY: 0
+        });
+        moves.add({
+            x: -10,
+            y: -150,
+            vX: 0,
+            vY: +1
+        });
+        moves.add({
+            x: -10,
+            y: -30,
+            vX: -1,
+            vY: 0
+        });
+        moves.add({
+            x: -40,
+            y: -30,
+            vX: 0,
+            vY: +1
+        });
+        moves.add({
+            x: -40,
+            y: 30,
+            vX: +1,
+            vY: 0
+        });
+        this.set('moves', moves);
+
+        var body = new doublyLinkedList.DoublyLinkedList()
+        var sprite2 = cocos.nodes.Sprite.create({
             file: '/resources/snake-head.png',
             //rect: new geom.Rect(96, 0, 16, 16)
         });
+        sprite2.set('position', new geom.Point(0, 0));
+        sprite2.set('velocity', util.copy(this.get('initialVelocity')));
+        body.add(sprite2);
+        this.addChild({child: body.item(0)});
+
+        this.set('body', body);
+        this.addSection();
+        this.addSection();
+        this.addSection();
+        this.addSection();
+        this.addSection();
+        body = this.get('body', body);
+        this.set('body', body);
+
+        var d = new Date();
+        d.getTime();
+        this.set('startTime', d);
+
+        this.set('posToMove', new geom.Point(-48,0));
+        var posToMove = this.get('posToMove');
+        console.log(posToMove.x + " " + posToMove.y);
+
+        //this.set('step', 0);
+
+        this.scheduleUpdate();
+    },
+
+    update: function(dt) {
+        //var pos = util.copy(this.get('position'));
+        var body = this.get('body');
+
+        var posToMove = this.get('posToMove');
+        //if(new Date().getTime() > this.get('startTime').getTime() + 800) {
+        //    body.item(0).set('velocity', new geom.Point(0, 60));
+        //    var pos = util.copy(body.item(i).get('position'));
+        //}
+        if(new Date().getTime() > this.get('startTime').getTime() + 800) {
+            var pos = util.copy(body.item(0).get('position'));
+            //console.log(pos.x + " " + pos.y);
+        }
+
+        for(var i=0; i<body.size() ; i++) {
+            var pos = util.copy(body.item(i).get('position'));
+            var vel = util.copy(body.item(i).get('velocity'));
+            //console.log("on " + i + " at " + pos.x + ", " + pos.y);
+
+            // Calculate the position if keep moving forward
+            var speed = util.copy(this.get('speed'));
+            var dX = dt * vel.x*speed;
+            var dY = dt * vel.y*speed;
+            var newX = pos.x + dX;
+            var newY = pos.y + dY;
+            //console.log(pos.x + " " + pos.y);
+
+            var moves = this.get('moves');
+            for(var j=0; j<moves.size() ;j++) {
+                var move = util.copy(moves.item(j));
+                if(this.isBetween(pos.x, newX, move.x) && this.isBetween(pos.y, newY, move.y)) {
+                    console.log("set vel for " + i + " to " + move.vX + ", " + move.vY);
+                    // Set new velocity
+                    body.item(i).set('velocity', new geom.Point(move.vX,move.vY));
+
+                    var xDir = Math.abs(move.vX);
+                    var yDir = Math.abs(move.vY);
+                    if(i == 0) {
+                        // Give leftover velocity to the correct place
+                        dX += dY - Math.abs(pos.y - move.y);
+                        newX = move.x + (dX*xDir);
+
+                        dY += dX - Math.abs(pos.x - move.x);
+                        newY = move.y + (dY*yDir);
+                    } else {
+                        // Set variable being changed to be directly in line
+                        // and other one directly behind previous segment
+                        var prevPos = body.item(i - 1).get('position');
+                        newY = xDir*move.y + yDir*(prevPos.y - 16*move.vY);
+                        newX = yDir*move.x + xDir*(prevPos.x - 16*move.vX);
+                    }
+
+                    // If this is the last segment to reach the move, remove it
+                    if(i+1 == body.size()) {
+                        console.log("Going to remove, on " + j + "  moves: " + moves);
+                        moves.remove(j);
+                    }
+
+                    // Don't need to check any other moves (never have two moves at same spot)
+                    break;
+                }
+            }
+
+            // Set and store the new position
+            pos.x = newX;
+            pos.y = newY;
+            this.get('body').item(i).set('position', pos);
+            var step2 = util.copy(this.get('step'));
+            if(step2 % 10 == 0) {
+                //console.log("step: " + step2 + " i: " + i + " newX: " + newX + " newY: "+ newY);
+            }
+        }
+
+        var step = util.copy(this.get('step'));
+        step += 1;
+        this.set('step', step);
+        //console.log("on step " + step);
+    },
+
+    // Check if val is between min and max
+    isBetween: function(min, max, val) {
+        // If min and max are reversed, swap them
+        if(min > max) {
+            var tmp = min;
+            min = max;
+            max = tmp;
+        }
+
+        if(val >= min && val <= max) {
+            return true;
+        } else {
+            return false;
+        }
+    },
+
+    addSection: function() {
+        //var body = util.copy(this.get('body'));
+        var body = this.get('body');
+
         var sprite = cocos.nodes.Sprite.create({
             file: '/resources/snake-body.png',
             //rect: new geom.Rect(64, 0, 16, 16)
         });
-
-        sprite.set('anchorPoint', new geom.Point(0, 0));
-        spriteHead.set('anchorPoint', new geom.Point(-1, 0));
-        this.addChild({child: sprite});
-        this.addChild({child: spriteHead});
-        this.set('contentSize', sprite.get('contentSize'));
-        this.set('contentSize', spriteHead.get('contentSize'));
+        var lastPos = body.last().get('position');
+        sprite.set('position', new geom.Point(lastPos.x + 16, 0));
+        sprite.set('velocity', this.get('initialVelocity'));
+        body.add(sprite);
+        this.addChild({child: body.last()});
     }
 });
 

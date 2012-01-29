@@ -15,7 +15,7 @@
                 text-shadow: 0 2px 1px #fff;
             }
             #snake_chase_app {
-                border: 1px solid #000;
+                border: 10px solid #000;
                 width: 720px;
                 height: 540px;
                 margin: 0 auto;
@@ -31,12 +31,13 @@
         <script src="main.js" type="text/javascript"></script>
     </head> 
     <body> 
-       <audio autoplay="autoplay">
-            <source src="assets/resources/snake-chase-bg.mp3" type="audio/mp3" />
+       <div id="title" style="display: none" > <h1> Snake Chase </h1> </div>
+       <div id="snake_chase_app">Snake Chase is loading...</div>
+       <div id="audio-control" style="text-align: center" > 
+       <audio id="audio-bg" autoplay controls loop="loop">
+            <source src="/__jah__/resources/snake-chase-bg.mp3" type="audio/mp3" />
             Your browser does not support the audio tag.
        </audio>
-       
-       <div id="snake_chase_app">Snake Chase is loading...</div>
-       
+       </div>
     </body>
 </html>
