@@ -706,7 +706,7 @@ var cocos = require('cocos2d'),
 
 var PLAYER_SPEED = 100;
 
-var effectDead = new Audio("/__jah__/resources/dead.wav");
+var effectDead = new Audio("assets/resources/dead.wav");
 
 var circleOverlap = function(rect1, rect2) {
     // Get radiuses and approximate the center.
@@ -839,13 +839,13 @@ var Player = cocos.nodes.Node.extend({
 	
 	playStopEffect: function() {
 	    console.log('stop.play');
-        var snd = new Audio("/__jah__/resources/stop.wav");
+        var snd = new Audio("assets/resources/stop.wav");
         snd.play();
     },
 
 	playDeadEffect: function() {
 	    console.log('dead.play');
-        var snd = new Audio("/__jah__/resources/dead.wav");
+        var snd = new Audio("assets/resources/dead.wav");
         snd.play();
     },
                   
