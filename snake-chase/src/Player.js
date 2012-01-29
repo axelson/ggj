@@ -52,7 +52,7 @@ var Player = cocos.nodes.Node.extend({
         // Initialize death frames
         this.deathFrames = Array();
         var texture = cocos.Texture2D.create({
-            file: '/resources/explosion.jpg'
+            file: '/resources/explosion.png'
         });
         
         var frame = null;
