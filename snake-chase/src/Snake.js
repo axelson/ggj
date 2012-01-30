@@ -82,6 +82,7 @@ var Snake = cocos.nodes.Node.extend({
         var move = {
             x: myPos.x + myVel.x,
             y: myPos.y + myVel.y,
+            type: "move",
             vX: 0,
             vY: 0
         }
