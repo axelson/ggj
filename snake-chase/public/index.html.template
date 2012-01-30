@@ -40,7 +40,7 @@
        <div id="audio_control" style="display: none"> 
        <b>Use arrow keys or WASD to move the Turtle</b>
        <span style="float:right"> 
-       <audio id="audio-bg" autoplay controls loop="loop">
+       <audio id="audio-bg" controls="controls" loop="loop" autoplay="autoplay">
             <source src="/__jah__/resources/snake-chase-bg.wav" type="audio/wav" />
             <source src="/__jah__/resources/snake-chase-bg.mp3" type="audio/mp3" />
             Your browser does not support the audio tag.

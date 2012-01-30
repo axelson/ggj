@@ -92,6 +92,46 @@ DoublyLinkedList.prototype = {
     },
 
     /**
+     * Appends some data to the list at i.
+     * @param {variant} i The position to add in the list.
+     * @param {variant} data The data to add to the list.
+     * @return {Void}
+     * @method addAt
+     */
+    addAt: function (i, data){
+
+        if(i > this.size()) {
+          console.log("UNABLE to add at i: " + i + " because size: " + this.size());
+        }
+
+        //create a new item object, place data in
+        var node = {
+                data: data,
+                next: null,
+                prev: null
+            };
+
+        //special case: no items in the list yet
+        if (this._length == 0) {
+            this._head = node;
+            this._tail = node;
+        } else {
+            // Get the location
+            var before = this.itemNode(i-1);
+            var after = before.next;
+            before.next = node;
+            after.prev = node;
+
+            node.prev = before;
+            node.next = after;
+        }
+
+        //don't forget to update the count
+        this._length++;
+
+    },
+
+    /**
      * Retrieves the data in the given position in the list.
      * @param {int} index The zero-based index of the item whose value
      *      should be returned.
@@ -100,6 +140,26 @@ DoublyLinkedList.prototype = {
      * @method item
      */
     item: function(index){
+      //console.log("on item index: " + index);
+
+
+      var toReturn = this.itemNode(index);
+      if(toReturn !== null) {
+          return this.itemNode(index).data;
+      } else {
+          return null;
+      }
+    },
+
+    /**
+     * Retrieves the node in the given position in the list.
+     * @param {int} index The zero-based index of the item whose value
+     *      should be returned.
+     * @return {variant} The value in the "data" portion of the given item
+     *      or null if the item doesn't exist.
+     * @method item
+     */
+    itemNode: function(index){
 
         //check for out-of-bounds values
         if (index > -1 && index < this._length){
@@ -110,7 +170,7 @@ DoublyLinkedList.prototype = {
                 current = current.next;
             }
 
-            return current.data;
+            return current;
         } else {
             return null;
         }
