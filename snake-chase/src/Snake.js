@@ -64,6 +64,30 @@ var Snake = cocos.nodes.Node.extend({
             vX: 0,
             vY: +1
         });
+        moves.add({
+            x: -10,
+            y: -118,
+            type: "grow"
+        });
+        moves.add({
+            x: -10,
+            y: -130,
+            type: "move",
+            vX: +1,
+            vY: 0
+        });
+        moves.add({
+            x: 10,
+            y: -130,
+            type: "grow"
+        });
+        moves.add({
+            x: 30,
+            y: -130,
+            type: "move",
+            vX: 0,
+            vY: 1
+        });
         //moves.add({
         //    x: -10,
         //    y: -30,
