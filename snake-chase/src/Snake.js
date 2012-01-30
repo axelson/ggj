@@ -42,9 +42,9 @@ var Snake = cocos.nodes.Node.extend({
         this.set('body', body);
         this.addSection();
         this.addSection();
-        //this.addSection();
-        //this.addSection();
-        //this.addSection();
+        this.addSection();
+        this.addSection();
+        this.addSection();
         body = this.get('body', body);
         this.set('body', body);
 
@@ -104,7 +104,7 @@ var Snake = cocos.nodes.Node.extend({
                 move.vY = 1;
             }
         }
-        console.log('adding move');
+        console.log('adding move x: '+ move.x + ' move.y: ' + move.y);
         console.log(move);
         this.moves.add(move);
     },
@@ -214,9 +214,11 @@ var Snake = cocos.nodes.Node.extend({
             }
             this.get('body').item(i).set('position', pos);
             var step2 = util.copy(this.get('step'));
-            if(step2 % 10 == 0) {
+            if(step2 % 1 == 0) {
                 //this.printMoves();
-                //console.log("step: " + step2 + " i: " + i + " newX: " + newX + " newY: "+ newY);
+                if(i == 0) {
+                    //console.log("step: " + step2 + " i: " + i + " newX: " + newX + " newY: "+ newY);
+                }
             }
         }
 
