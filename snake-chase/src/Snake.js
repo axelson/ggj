@@ -45,25 +45,25 @@ var Snake = cocos.nodes.Node.extend({
             y: -48,
             type: "grow"
         });
+        //moves.add({
+        //    x: -96,
+        //    y: -64,
+        //    type: "stop"
+        //});
         moves.add({
             x: -96,
-            y: -144,
-            type: "stop"
+            y: -150,
+            type: "move",
+            vX: +1,
+            vY: 0
         });
-        //moves.add({
-        //    x: -48,
-        //    y: -150,
-        //    type: "move",
-        //    vX: +1,
-        //    vY: 0
-        //});
-        //moves.add({
-        //    x: -10,
-        //    y: -150,
-        //    type: "move",
-        //    vX: 0,
-        //    vY: +1
-        //});
+        moves.add({
+            x: -10,
+            y: -150,
+            type: "move",
+            vX: 0,
+            vY: +1
+        });
         //moves.add({
         //    x: -10,
         //    y: -30,
@@ -100,9 +100,9 @@ var Snake = cocos.nodes.Node.extend({
         this.set('body', body);
         this.addSection();
         this.addSection();
-        this.addSection();
-        this.addSection();
-        this.addSection();
+        //this.addSection();
+        //this.addSection();
+        //this.addSection();
         body = this.get('body', body);
         this.set('body', body);
 
@@ -157,7 +157,7 @@ var Snake = cocos.nodes.Node.extend({
                         }
                         if(move.type === "start") {
                             console.log("should start!");
-                            this.start();
+                            this.start(newX, newY);
                             moves.remove(j);
                         }
                         if(move.type === "stop") {
@@ -194,17 +194,25 @@ var Snake = cocos.nodes.Node.extend({
                     }
 
                     // Don't need to check any other moves (never have two moves at same spot)
-                    break;
+                    //break;
                 }
             }
 
             // Set and store the new position
-            pos.x = newX;
-            pos.y = newY;
+            var newPos = this.get('body').item(i).get('newPosition');
+            //console.log("new pos: " + newPos);
+            if(typeof newPos !== "undefined") {
+                pos.x = newPos.x;
+                pos.y = newPos.y;
+                this.get('body').item(i).set('newPosition');
+            } else {
+                pos.x = newX;
+                pos.y = newY;
+            }
             this.get('body').item(i).set('position', pos);
             var step2 = util.copy(this.get('step'));
             if(step2 % 10 == 0) {
-                this.printMoves();
+                //this.printMoves();
                 //console.log("step: " + step2 + " i: " + i + " newX: " + newX + " newY: "+ newY);
             }
         }
@@ -276,7 +284,7 @@ var Snake = cocos.nodes.Node.extend({
         this.addChild({child: body.item(1)});
     },
 
-    start: function() {
+    start: function(newX, newY) {
         console.log("Starting!");
         var body = this.get('body');
         var headVel = util.copy(body.item(0).get('velocity'));
@@ -284,11 +292,8 @@ var Snake = cocos.nodes.Node.extend({
         body.item(1).set('velocity', headVel);
         for(var k=2; k<body.size() ; k++) {
             var moves = this.get('moves');
-            for(var j=0; j<moves.size() ; j++) {
-                var test = j;
-            }
             var oldVel = util.copy(body.item(k).get('prevVelocity'));
-            console.log("old vel x: " + oldVel.x + " y: " + oldVel.y);
+            console.log("k: " + k + " old vel x: " + oldVel.x + " y: " + oldVel.y);
             body.item(k).set('velocity', util.copy(body.item(k).get('prevVelocity')));
             var prevPos = body.item(k - 1).get('position');
             var prevVel = body.item(k - 1).get('velocity');
@@ -300,7 +305,26 @@ var Snake = cocos.nodes.Node.extend({
             var pos = util.copy(body.item(k).get('position'));
             pos.x = newX;
             pos.y = newY;
-            this.get('body').item(k).set('position', pos);
+            //this.get('body').item(k).set('position', pos);
+
+            var pos2 = util.copy(body.item(k).get('position'));
+            for(var j=0; j<moves.size() ; j++) {
+                var move = util.copy(moves.item(j));
+                if(this.isBetween(pos2.x, newX, move.x) && this.isBetween(pos2.y, newY, move.y)) {
+                    if(move.type === "move") {
+                        console.log("Between! on Move! Set vel for " + k);
+                        var curVel = util.copy(body.item(k).get('velocity'));
+                        curVel.x = move.vX;
+                        curVel.y = move.vY;
+                        body.item(k).set('velocity', curVel);
+
+                        var prevPos = body.item(k - 1).get('position');
+                        newX = yDir*move.x + xDir*(prevPos.x - 16*move.vX);
+                        newY = xDir*move.y + yDir*(prevPos.y - 16*move.vY);
+                        body.item(k).set('newPosition', new geom.Point(newX, newY));
+                    }
+                }
+            }
         }
 
     },
