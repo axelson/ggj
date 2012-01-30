@@ -140,8 +140,15 @@ DoublyLinkedList.prototype = {
      * @method item
      */
     item: function(index){
+      //console.log("on item index: " + index);
 
-      return this.itemNode(index).data;
+
+      var toReturn = this.itemNode(index);
+      if(toReturn !== null) {
+          return this.itemNode(index).data;
+      } else {
+          return null;
+      }
     },
 
     /**
