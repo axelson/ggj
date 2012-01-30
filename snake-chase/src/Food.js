@@ -25,13 +25,22 @@ var Food = cocos.nodes.Node.extend({
         if (this.visible) {
             var foodBox = this.get('boundingBox'),
                 playerBox = this.get('parent').get('player').get('boundingBox');
+            var snake = this.get('parent').get('snake');
+            //var snakeBox = this.get('parent').get('snake').get('body').item(0).get('boundingBox');
+            var snakeBox = snake.get('body').item(0).get('boundingBox');
 
-            if (geom.rectOverlapsRect(foodBox, playerBox)) {
+            if (geom.rectOverlapsRect(foodBox, snakeBox)) {
                 this.get('parent').removeFood(this);
                 
                 console.log('pickup.play');
                 var snd = new Audio("/__jah__/resources/pickup.wav");
                 snd.play();
+                //var parent = this.get('parent');
+                console.log('got parent');
+                //var snake = parent.get('snake');
+                console.log('got snake');
+                snake.grow();
+                console.log('snake grow');
             }
             if(this.get('added') === false) {
                 var pos = this.get('position');

@@ -78,7 +78,7 @@ var Snake = cocos.nodes.Node.extend({
     trackPlayer: function(dt) {   
         var numMoves = 0;
         for(var j=0; j<this.moves.size() ;j++) {
-            var move = util.copy(this.moves.item(j));
+            var move = this.moves.item(j);
             if(move.type === "move") {
                 numMoves++;
             }
@@ -100,7 +100,8 @@ var Snake = cocos.nodes.Node.extend({
             y: myPos.y + myVel.y,
             type: "move",
             vX: 0,
-            vY: 0
+            vY: 0,
+            sprite: null
         }
         
         console.log(myVel.x);
@@ -121,7 +122,15 @@ var Snake = cocos.nodes.Node.extend({
             }
         }
         console.log('adding move x: '+ move.x + ' move.y: ' + move.y);
-        console.log(move);
+        //console.log(move);
+        var sprite = cocos.nodes.Sprite.create({
+            file: '/resources/sprites.png',
+            rect: new geom.Rect(96, 0, 16, 16)
+        });
+        sprite.visible = false;
+        sprite.set('position', new geom.Point(move.x, move.y));
+        this.addChild({child: sprite});
+        move.sprite = sprite;
         this.moves.add(move);
     },
     
@@ -167,7 +176,7 @@ var Snake = cocos.nodes.Node.extend({
 
             var moves = this.get('moves');
             for(var j=0; j<moves.size() ;j++) {
-                var move = util.copy(moves.item(j));
+                var move = moves.item(j);
                 if(this.isBetween(pos.x, newX, move.x) && this.isBetween(pos.y, newY, move.y)) {
                     if(move.type !== "move") {
                         if(move.type === "grow") {
@@ -215,6 +224,15 @@ var Snake = cocos.nodes.Node.extend({
                     if(i+1 == body.size()) {
                         console.log("Going to remove, on " + j + "  moves: " + moves);
                         moves.remove(j);
+                        if(typeof move.sprite !== "undefined") {
+                            //this.get('parent').removeFood(this);
+                            var sprite = move.sprite;
+                            move.sprite = "undefined";
+                            sprite.visible = false;
+                            this.get('parent').removeChild({child: sprite});
+                            //this.food.array[i].visible = false;
+                            //this.removeChild({child: this.food.array[i]});
+                        }
                     }
 
                     // Don't need to check any other moves (never have two moves at same spot)
@@ -268,11 +286,11 @@ var Snake = cocos.nodes.Node.extend({
     },
 
     grow: function() {
-        console.log("Growing!");
         var moves = this.get('moves');
         var body = this.get('body');
 
         var headPos = util.copy(body.item(0).get('position'));
+        console.log("Growing! at "+ headPos.x, + ", "+ headPos.y);
         var headVel = util.copy(body.item(0).get('velocity'));
         //moves.add({
         //    x: -48,
@@ -337,7 +355,7 @@ var Snake = cocos.nodes.Node.extend({
 
             var pos2 = util.copy(body.item(k).get('position'));
             for(var j=0; j<moves.size() ; j++) {
-                var move = util.copy(moves.item(j));
+                var move = moves.item(j);
                 if(this.isBetween(pos2.x, newX, move.x) && this.isBetween(pos2.y, newY, move.y)) {
                     if(move.type === "move") {
                         console.log("Between! on Move! Set vel for " + k);
@@ -360,7 +378,7 @@ var Snake = cocos.nodes.Node.extend({
     printMoves: function() {
         var moves = this.get('moves');
         for(var i=0; i<moves.size() ; i++) {
-            var move = util.copy(moves.item(i));
+            var move = moves.item(i);
             console.log(i + " move type: " + move.type + " loc: " + move.x + ", " + move.y);
         }
     },
