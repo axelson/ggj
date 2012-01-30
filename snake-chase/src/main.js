@@ -12,13 +12,19 @@ var cocos  = require('cocos2d')   // Import the cocos2d module
   , Background  = require('./Background').Background;
   
 var KEYS = {
+    w: 87,
+    a: 65,
+    s: 83,
+    d: 68,
     left: 37,
     up: 38,
     right: 39,
-    down: 40
+    down: 40,
+    esc: 27
 };
 
 var MAX_FOOD = 5;
+var PAUSED = 0;
 
 var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     /**
@@ -33,11 +39,14 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     timeLabel: null,
     level: null,
     points: null,
+    pauseLabel: null,
     
     init: function (opts) {
         // You must always call the super class version of init
         this.level = opts.level;
         this.points = opts.points;
+        
+        this.pauseLabel = cocos.nodes.Label.create({string: "PAUSED", fontSize: 32}),
         
         SnakeChase.superclass.init.call(this);
 
@@ -79,7 +88,7 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         this.addChild({child: background});
         this.set('background', background);
         
-        var player = Player.create();
+        var player = Player.create({});
         player.set('position', new geo.Point(160, 250));
         this.addChild({child: player});
         this.set('player', player);
@@ -174,19 +183,41 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
     keyDown: function(event) {
         // console.log(event.keyCode);
         var player = this.get('player');
+        var snake = this.get('snake');
         var pos = player.get('position');
-        
-        if (event.keyCode == KEYS.left) {
+        console.log(event.keyCode);
+        if (event.keyCode == KEYS.left || event.keyCode == KEYS.a) {
             player.setVelocity(new geo.Point(-1, 0));
         }
-        else if (event.keyCode == KEYS.up) {
+        else if (event.keyCode == KEYS.up || event.keyCode == KEYS.w) {
             player.setVelocity(new geo.Point(0, -1));
         }
-        else if (event.keyCode == KEYS.right) {
+        else if (event.keyCode == KEYS.right || event.keyCode == KEYS.d) {
             player.setVelocity(new geo.Point(1, 0));
         }
-        else if (event.keyCode == KEYS.down) {
+        else if (event.keyCode == KEYS.down || event.keyCode == KEYS.s) {
             player.setVelocity(new geo.Point(0, 1));
+        }
+        else if (event.keyCode == KEYS.esc) {
+            // Pause
+            
+            if (PAUSED == 0) {
+              player.pauseSchedulerAndActions();
+              snake.pauseSchedulerAndActions();
+            
+              var winSize = cocos.Director.get('sharedDirector').get('winSize');
+              this.pauseLabel.set('anchorPoint', new geo.Point(0, 0));
+              this.pauseLabel.set('position', new geo.Point(winSize.width / 2 , 5));
+              this.addChild({child: this.pauseLabel});
+              PAUSED = 1;
+           }
+           else {
+              player.resumeSchedulerAndActions();
+              snake.resumeSchedulerAndActions();
+              this.removeChild({child: this.pauseLabel});
+              
+              PAUSED = 0;
+           }
         }
     },
     

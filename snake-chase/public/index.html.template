@@ -38,7 +38,7 @@
        <div id="title" style="display: none" > <h1> Snake Chase </h1> </div>
        <div id="snake_chase_app">Snake Chase is loading...</div>
        <div id="audio_control" style="display: none"> 
-       <b>Use ARROW KEY to move the Turtle</b>
+       <b>Use arrow keys or WASD to move the Turtle</b>
        <span style="float:right"> 
        <audio id="audio-bg" autoplay controls loop="loop">
             <source src="/__jah__/resources/snake-chase-bg.wav" type="audio/wav" />

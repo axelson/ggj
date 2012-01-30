@@ -6,9 +6,11 @@ var doublyLinkedList = require('./DoublyLinkedList');
 // Maximum size of the moves list.
 var MAX_MOVES = 3;
 
+var SNAKE_VELOCITY = 80;
+
 var Snake = cocos.nodes.Node.extend({
     initialVelocity: new geom.Point(-1, 0),
-    speed: 80,
+    speed: null,
     body: null,
     moves: null,
     head: null,
@@ -20,6 +22,10 @@ var Snake = cocos.nodes.Node.extend({
     init: function(opts) {
         Snake.superclass.init.call(this);
         this.parent = opts.parent;
+        this.speed = SNAKE_VELOCITY;
+        if (opts.velocity) {
+            this.speed = opts.velocity;
+        }
         var pos = new geom.Point(0, 0);
         if (opts.initialPos !== null) {
             pos = opts.initialPos;
