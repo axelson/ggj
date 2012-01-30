@@ -103,7 +103,7 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         this.food = new BArray();
         var food = null;
         for (var i=0; i<MAX_FOOD; i++) {
-            this.food.push(Food.create());
+            this.food.push(Food.create(this));
         }
         // console.log(this.food);
         this.schedule({

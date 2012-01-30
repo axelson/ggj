@@ -3,8 +3,9 @@ var geom = require('geometry');
 
 var Food = cocos.nodes.Node.extend({
     visible: false,
+    added: false,
     
-    init: function() {
+    init: function(parent) {
         Food.superclass.init.call(this);
 
         var cherry = cocos.nodes.Sprite.create({
@@ -13,6 +14,7 @@ var Food = cocos.nodes.Node.extend({
         });
         this.addChild({child: cherry});
         this.set('contentSize', cherry.get('contentSize'));
+        //var moves = this.get('parent').get('snake').get('moves');
         this.schedule({
             method: this.update
         })
@@ -30,6 +32,21 @@ var Food = cocos.nodes.Node.extend({
                 console.log('pickup.play');
                 var snd = new Audio("/__jah__/resources/pickup.wav");
                 snd.play();
+            }
+            if(this.get('added') === false) {
+                var pos = this.get('position');
+                //var moves = parent.get('snake').get('moves');
+                var moves = this.get('parent').get('snake').get('moves');
+                console.log("adding food at " + pos.x + ", " + pos.y);
+                //moves.add({
+                //    x: pos.x,
+                //    y: pos.y,
+                //    type: "bogus"
+                //});
+                var parent = this.get('parent');
+                var snake = parent.get('snake');
+                var moves = snake.set('moves', moves);
+                this.set('added', true);
             }
         }
     }

@@ -51,6 +51,9 @@ var Snake = cocos.nodes.Node.extend({
         this.addSection();
         this.addSection();
         this.addSection();
+        this.addSection();
+        this.addSection();
+        this.addSection();
         body = this.get('body', body);
         this.set('body', body);
 
@@ -73,7 +76,14 @@ var Snake = cocos.nodes.Node.extend({
     },
     
     trackPlayer: function(dt) {   
-        if (this.moves.size() == MAX_MOVES) {
+        var numMoves = 0;
+        for(var j=0; j<this.moves.size() ;j++) {
+            var move = util.copy(this.moves.item(j));
+            if(move.type === "move") {
+                numMoves++;
+            }
+        }
+        if (numMoves >= MAX_MOVES) {
             return;
         }
         
@@ -164,6 +174,11 @@ var Snake = cocos.nodes.Node.extend({
                             this.grow();
                             moves.remove(j);
                         }
+                        if(move.type === "food") {
+                            //console.log("ate food!");
+                            //this.grow();
+                            //moves.remove(j);
+                        }
                         if(move.type === "start") {
                             console.log("should start!");
                             this.start(newX, newY);
@@ -175,7 +190,7 @@ var Snake = cocos.nodes.Node.extend({
                         }
                         continue;
                     }
-                    console.log("set vel for " + i + " to " + move.vX + ", " + move.vY);
+                    //console.log("set vel for " + i + " to " + move.vX + ", " + move.vY);
                     // Set new velocity
                     body.item(i).set('velocity', new geom.Point(move.vX,move.vY));
 
