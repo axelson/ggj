@@ -1,4 +1,3851 @@
 (function(){
+__jah__.resources["/libs/cocos2d/TMXXMLParser.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray DOMParser console*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    path = require('path'),
+    ccp = require('geometry').ccp,
+    base64 = require('base64'),
+    gzip   = require('gzip'),
+    TMXOrientationOrtho = require('./TMXOrientation').TMXOrientationOrtho,
+    TMXOrientationHex = require('./TMXOrientation').TMXOrientationHex,
+    TMXOrientationIso = require('./TMXOrientation').TMXOrientationIso;
+
+var TMXTilesetInfo = BObject.extend(/** @lends cocos.TMXTilesetInfo# */{
+    name: '',
+    firstGID: 0,
+    tileSize: null,
+    spacing: 0,
+    margin: 0,
+    sourceImage: null,
+
+    /**
+     * @memberOf cocos
+     * @constructs
+     * @extends BObject
+     */
+    init: function () {
+        TMXTilesetInfo.superclass.init.call(this);
+    },
+
+    rectForGID: function (gid) {
+        var rect = {size: {}, origin: ccp(0, 0)};
+        rect.size = util.copy(this.tileSize);
+        
+        gid = gid - this.firstGID;
+
+        var imgSize = this.get('imageSize');
+        
+        var maxX = Math.floor((imgSize.width - this.margin * 2 + this.spacing) / (this.tileSize.width + this.spacing));
+        
+        rect.origin.x = (gid % maxX) * (this.tileSize.width + this.spacing) + this.margin;
+        rect.origin.y = Math.floor(gid / maxX) * (this.tileSize.height + this.spacing) + this.margin;
+        
+        return rect;
+    }
+});
+
+var TMXLayerInfo = BObject.extend(/** @lends cocos.TMXLayerInfo# */{
+    name: '',
+    layerSize: null,
+    tiles: null,
+    visible: true,
+    opacity: 255,
+    minGID: 100000,
+    maxGID: 0,
+    properties: null,
+    offset: null,
+
+    /**
+     * @memberOf cocos
+     * @constructs
+     * @extends BObject
+     */
+    init: function () {
+        TMXLayerInfo.superclass.init.call(this);
+
+        this.properties = {};
+        this.offset = ccp(0, 0);
+    }
+});
+
+var TMXObjectGroup = BObject.extend(/** @lends cocos.TMXObjectGroup# */{
+    name: '',
+    properties: null,
+    offset: null,
+    objects: null,
+
+    /**
+     * @memberOf cocos
+     * @constructs
+     * @extends BObject
+     */
+    init: function () {
+        TMXObjectGroup.superclass.init.call(this);
+
+        this.properties = {};
+        this.objects = {};
+        this.offset = ccp(0, 0);
+    },
+
+    /**
+     * Get the value for the specific property name
+     *
+     * @opt {String} name Property name
+     * @returns {String} Property value
+     */
+    getProperty: function (opts) {
+        var propertyName = opts.name;
+        return this.properties[propertyName];
+    },
+
+    /**
+     * @deprected Since v0.2. You should now use cocos.TMXObjectGroup#getProperty
+     */
+    propertyNamed: function (opts) {
+        console.warn('TMXObjectGroup#propertyNamed is deprected. Use TMXTiledMap#getProperty instread');
+        return this.getProperty(opts);
+    },
+
+    /**
+     * Get the object for the specific object name. It will return the 1st
+     * object found on the array for the given name.
+     *
+     * @opt {String} name Object name
+     * @returns {Object} Object
+     */
+    getObject: function (opts) {
+        var objectName = opts.name;
+        var object = null;
+        
+        this.objects.forEach(function (item) {
+            if (item.name == objectName) {
+                object = item;
+            }
+        });
+        if (object !== null) {
+            return object;
+        }
+    },
+
+    /**
+     * @deprected Since v0.2. You should now use cocos.TMXObjectGroup#getProperty
+     */
+    objectNamed: function (opts) {
+        console.warn('TMXObjectGroup#objectNamed is deprected. Use TMXObjectGroup#getObject instread');
+        return this.getObject(opts);
+    }
+});
+
+var TMXMapInfo = BObject.extend(/** @lends cocos.TMXMapInfo# */{
+    filename: '',
+    orientation: 0,
+    mapSize: null,
+    tileSize: null,
+    layer: null,
+    tilesets: null,
+    objectGroups: null,
+    properties: null,
+    tileProperties: null,
+
+    /**
+     * @memberOf cocos
+     * @constructs
+     * @extends BObject
+     *
+     * @param {String} tmxFile The file path of the TMX file to load
+     */
+    init: function (tmxFile) {
+        TMXMapInfo.superclass.init.call(this, tmxFile);
+
+        this.tilesets = [];
+        this.layers = [];
+        this.objectGroups = [];
+        this.properties = {};
+        this.tileProperties = {};
+        this.filename = tmxFile;
+
+        this.parseXMLFile(tmxFile);
+    },
+
+    parseXMLFile: function (xmlFile) {
+        var parser = new DOMParser(),
+            doc = parser.parseFromString(resource(xmlFile), 'text/xml');
+
+        // PARSE <map>
+        var map = doc.documentElement;
+
+        // Set Orientation
+        switch (map.getAttribute('orientation')) {
+        case 'orthogonal':
+            this.orientation = TMXOrientationOrtho;
+            break;
+        case 'isometric':
+            this.orientation = TMXOrientationIso;
+            break;
+        case 'hexagonal':
+            this.orientation = TMXOrientationHex;
+            break;
+        default:
+            throw "cocos2d: TMXFomat: Unsupported orientation: " + map.getAttribute('orientation');
+        }
+        this.mapSize = {width: parseInt(map.getAttribute('width'), 10), height: parseInt(map.getAttribute('height'), 10)};
+        this.tileSize = {width: parseInt(map.getAttribute('tilewidth'), 10), height: parseInt(map.getAttribute('tileheight'), 10)};
+
+
+        // PARSE <tilesets>
+        var tilesets = map.getElementsByTagName('tileset');
+        var i, j, len, jen, s;
+        for (i = 0, len = tilesets.length; i < len; i++) {
+            var t = tilesets[i];
+
+            var tileset = TMXTilesetInfo.create();
+            tileset.set('name', t.getAttribute('name'));
+            tileset.set('firstGID', parseInt(t.getAttribute('firstgid'), 10));
+            if (t.getAttribute('spacing')) {
+                tileset.set('spacing', parseInt(t.getAttribute('spacing'), 10));
+            }
+            if (t.getAttribute('margin')) {
+                tileset.set('margin', parseInt(t.getAttribute('margin'), 10));
+            }
+
+            s = {};
+            s.width = parseInt(t.getAttribute('tilewidth'), 10);
+            s.height = parseInt(t.getAttribute('tileheight'), 10);
+            tileset.set('tileSize', s);
+
+            // PARSE <image> We assume there's only 1
+            var image = t.getElementsByTagName('image')[0];
+            tileset.set('sourceImage', path.join(path.dirname(this.filename), image.getAttribute('source')));
+
+            this.tilesets.push(tileset);
+        }
+
+        // PARSE <layers>
+        var layers = map.getElementsByTagName('layer');
+        for (i = 0, len = layers.length; i < len; i++) {
+            var l = layers[i];
+            var data = l.getElementsByTagName('data')[0];
+            var layer = TMXLayerInfo.create();
+
+            layer.set('name', l.getAttribute('name'));
+            if (l.getAttribute('visible') !== false) {
+                layer.set('visible', true);
+            } else {
+                layer.set('visible', !!parseInt(l.getAttribute('visible'), 10));
+            }
+
+            s = {};
+            s.width = parseInt(l.getAttribute('width'), 10);
+            s.height = parseInt(l.getAttribute('height'), 10);
+            layer.set('layerSize', s);
+
+            var opacity = l.getAttribute('opacity');
+            if (!opacity && opacity !== 0) {
+                layer.set('opacity', 255);
+            } else {
+                layer.set('opacity', 255 * parseFloat(opacity));
+            }
+
+            var x = parseInt(l.getAttribute('x'), 10),
+                y = parseInt(l.getAttribute('y'), 10);
+            if (isNaN(x)) {
+                x = 0;
+            }
+            if (isNaN(y)) {
+                y = 0;
+            }
+            layer.set('offset', ccp(x, y));
+
+
+            // Firefox has a 4KB limit on node values. It will split larger
+            // nodes up into multiple nodes. So, we'll stitch them back
+            // together.
+            var nodeValue = '';
+            for (j = 0, jen = data.childNodes.length; j < jen; j++) {
+                nodeValue += data.childNodes[j].nodeValue;
+            }
+
+            // Unpack the tilemap data
+            var compression = data.getAttribute('compression');
+            switch (compression) {
+            case 'gzip':
+                layer.set('tiles', gzip.unzipBase64AsArray(nodeValue, 4));
+                break;
+                
+            // Uncompressed
+            case null:
+            case '': 
+                layer.set('tiles', base64.decodeAsArray(nodeValue, 4));
+                break;
+
+            default: 
+                throw "Unsupported TMX Tile Map compression: " + compression;
+            }
+
+            this.layers.push(layer);
+        }
+
+        // TODO PARSE <tile>
+
+        // PARSE <objectgroup>
+        var objectgroups = map.getElementsByTagName('objectgroup');
+        for (i = 0, len = objectgroups.length; i < len; i++) {
+            var g = objectgroups[i],
+                objectGroup = TMXObjectGroup.create();
+
+            objectGroup.set('name', g.getAttribute('name'));
+            
+            var properties = g.querySelectorAll('objectgroup > properties property'),
+                propertiesValue = {},
+                property;
+            
+            for (j = 0; j < properties.length; j++) {
+                property = properties[j];
+                if (property.getAttribute('name')) {
+                    propertiesValue[property.getAttribute('name')] = property.getAttribute('value');
+                }
+            }
+           
+            objectGroup.set('properties', propertiesValue);
+
+            var objectsArray = [],
+                objects = g.querySelectorAll('object');
+
+            for (j = 0; j < objects.length; j++) {
+                var object = objects[j];
+                var objectValue = {
+                    x       : parseInt(object.getAttribute('x'), 10),
+                    y       : parseInt(object.getAttribute('y'), 10),
+                    width   : parseInt(object.getAttribute('width'), 10),
+                    height  : parseInt(object.getAttribute('height'), 10)
+                };
+                if (object.getAttribute('name')) {
+                    objectValue.name = object.getAttribute('name');
+                }
+                if (object.getAttribute('type')) {
+                    objectValue.type = object.getAttribute('type');
+                }
+                properties = object.querySelectorAll('property');
+                for (var k = 0; k < properties.length; k++) {
+                    property = properties[k];
+                    if (property.getAttribute('name')) {
+                        objectValue[property.getAttribute('name')] = property.getAttribute('value');
+                    }
+                }
+                objectsArray.push(objectValue);
+
+            }
+            objectGroup.set('objects', objectsArray);
+            this.objectGroups.push(objectGroup);
+        }
+
+
+        // PARSE <map><property>
+        var properties = doc.querySelectorAll('map > properties > property');
+
+        for (i = 0; i < properties.length; i++) {
+            var property = properties[i];
+            if (property.getAttribute('name')) {
+                this.properties[property.getAttribute('name')] = property.getAttribute('value');
+            }
+        }
+    }
+});
+
+exports.TMXMapInfo = TMXMapInfo;
+exports.TMXLayerInfo = TMXLayerInfo;
+exports.TMXTilesetInfo = TMXTilesetInfo;
+exports.TMXObjectGroup = TMXObjectGroup;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/TMXXMLParser.js
+
+
+__jah__.resources["/libs/cocos2d/resources/progress-bar-empty.png"] = {data: __jah__.assetURL + "/libs/cocos2d/resources/progress-bar-empty.png", mimetype: "image/png", remote: true};
+__jah__.resources["/libs/cocos2d/resources/progress-bar-full.png"] = {data: __jah__.assetURL + "/libs/cocos2d/resources/progress-bar-full.png", mimetype: "image/png", remote: true};
+__jah__.resources["/libs/cocos2d/init.js"] = {data: function (exports, require, module, __filename, __dirname) {
+var path = require('path')
+
+exports.main = function () {
+    require.paths.push(path.join(__dirname, 'libs'))
+
+    /** @ignore
+     * Make BObject and BArray into globals
+     */
+    window.BObject = require('bobject').BObject;
+    window.BArray = require('bobject').BArray;
+
+    // Load default cocos2d config
+    var config = require('./config')
+    for (var k in config) {
+        if (config.hasOwnProperty(k)) {
+            window[k] = config[k]
+        }
+    }
+
+    // Load appliaction config
+    if (path.exists('/config.js')) {
+        config = require('/config')
+        for (var k in config) {
+            if (config.hasOwnProperty(k)) {
+                window[k] = config[k]
+            }
+        }
+    }
+};
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/init.js
+
+
+__jah__.resources["/libs/cocos2d/TextureAtlas.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray FLIP_Y_AXIS*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    Texture2D = require('./Texture2D').Texture2D;
+
+
+/* QUAD STRUCTURE
+ quad = {
+     drawRect: <rect>, // Where the quad is drawn to
+     textureRect: <rect>  // The slice of the texture to draw in drawRect
+ }
+*/
+
+var TextureAtlas = BObject.extend(/** @lends cocos.TextureAtlas# */{
+    quads: null,
+    imgElement: null,
+    texture: null,
+
+    /**
+     * A single texture that can represent lots of smaller images
+     *
+     * @memberOf cocos
+     * @constructs
+     * @extends BObject
+     *
+     * @opt {String} file The file path of the image to use as a texture
+     * @opt {Texture2D|HTMLImageElement} [data] Image data to read from
+     * @opt {CanvasElement} [canvas] A canvas to use as a texture
+     */
+    init: function (opts) {
+        var file = opts.file,
+            data = opts.data,
+            texture = opts.texture,
+            canvas = opts.canvas;
+
+        if (canvas) {
+            // If we've been given a canvas element then we'll use that for our image
+            this.imgElement = canvas;
+        } else {
+            texture = Texture2D.create({texture: texture, file: file, data: data});
+            this.set('texture', texture);
+            this.imgElement = texture.get('imgElement');
+        }
+
+        this.quads = [];
+    },
+
+    insertQuad: function (opts) {
+        var quad = opts.quad,
+            index = opts.index || 0;
+
+        this.quads.splice(index, 0, quad);
+    },
+    removeQuad: function (opts) {
+        var index = opts.index;
+
+        this.quads.splice(index, 1);
+    },
+
+
+    drawQuads: function (ctx) {
+        util.each(this.quads, util.callback(this, function (quad) {
+            if (!quad) {
+                return;
+            }
+
+            this.drawQuad(ctx, quad);
+        }));
+    },
+
+    drawQuad: function (ctx, quad) {
+        var sx = quad.textureRect.origin.x,
+            sy = quad.textureRect.origin.y,
+            sw = quad.textureRect.size.width, 
+            sh = quad.textureRect.size.height;
+
+        var dx = quad.drawRect.origin.x,
+            dy = quad.drawRect.origin.y,
+            dw = quad.drawRect.size.width, 
+            dh = quad.drawRect.size.height;
+
+
+        var scaleX = 1;
+        var scaleY = 1;
+
+        if (FLIP_Y_AXIS) {
+            dy -= dh;
+            dh *= -1;
+        }
+
+            
+        if (dw < 0) {
+            dw *= -1;
+            scaleX = -1;
+        }
+            
+        if (dh < 0) {
+            dh *= -1;
+            scaleY = -1;
+        }
+
+        ctx.scale(scaleX, scaleY);
+
+        var img = this.get('imgElement');
+        ctx.drawImage(img, 
+            sx, sy, // Draw slice from x,y
+            sw, sh, // Draw slice size
+            dx, dy, // Draw at 0, 0
+            dw, dh  // Draw size
+        );
+        ctx.scale(1, 1);
+    }
+});
+
+exports.TextureAtlas = TextureAtlas;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/TextureAtlas.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/Transition.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var geo             = require('geometry'),
+    util            = require('util'),
+    actions         = require('../actions'),
+    Scene           = require('./Scene').Scene,
+    Director        = require('../Director').Director,
+    EventDispatcher = require('../EventDispatcher').EventDispatcher,
+    Scheduler       = require('../Scheduler').Scheduler;
+
+/** @ignore
+ * Orientation Type used by some transitions
+ */
+var tOrientation = {
+    kOrientationLeftOver: 0,
+    kOrientationRightOver: 1,
+    kOrientationUpOver: 0,
+    kOrientationDownOver: 1
+};
+
+var TransitionScene = Scene.extend(/** @lends cocos.nodes.TransitionScene# */{
+    /**
+     * Incoming scene
+     * @type {cocos.nodes.Scene}
+     */
+    inScene: null,
+
+    /**
+     * Outgoing (current) scene
+     * @type {cocos.nodes.Scene}
+     */
+    outScene: null,
+
+    /**
+     * transition duration
+     * @type Float
+     */
+    duration: null,
+
+    inSceneOnTop: null,
+    sendCleanupToScene: null,
+
+    /**
+     * @class Base class for Transition scenes
+     *
+     * @memberOf cocos.nodes
+     * @extends cocos.nodes.Scene
+     * @constructs
+     *
+     * @opt {Float} duration How long the transition should last
+     * @opt {cocos.nodes.Scene} scene Income scene
+     */
+    init: function (opts) {
+        TransitionScene.superclass.init.call(this, opts);
+
+        this.set('duration', opts.duration);
+        if (!opts.scene) {
+            throw "TransitionScene requires scene property";
+        }
+        this.set('inScene', opts.scene);
+        this.set('outScene', Director.get('sharedDirector')._runningScene);
+
+        if (this.inScene == this.outScene) {
+            throw "Incoming scene must be different from the outgoing scene";
+        }
+        EventDispatcher.get('sharedDispatcher').set('dispatchEvents', false);
+        this.sceneOrder();
+    },
+
+    /**
+     * Called after the transition finishes
+     */
+    finish: function () {
+        var is = this.get('inScene'),
+            os = this.get('outScene');
+
+        /* clean up */
+        is.set('visible', true);
+        is.set('position', geo.PointZero());
+        is.set('scale', 1.0);
+        is.set('rotation', 0);
+
+        os.set('visible', false);
+        os.set('position', geo.PointZero());
+        os.set('scale', 1.0);
+        os.set('rotation', 0);
+
+        Scheduler.get('sharedScheduler').schedule({
+            target: this,
+            method: this.setNewScene,
+            interval: 0
+        });
+    },
+
+    /**
+     * Used by some transitions to hide the outer scene
+     */
+    hideOutShowIn: function () {
+        this.get('inScene').set('visible', true);
+        this.get('outScene').set('visible', false);
+    },
+    
+    setNewScene: function (dt) {
+        var dir = Director.get('sharedDirector');
+        
+        this.unscheduleSelector(this.setNewScene);
+        // Save 'send cleanup to scene'
+        // Not sure if it's cool to be accessing all these Director privates like this...
+        this.set('sendCleanupToScene', dir._sendCleanupToScene);
+        
+        dir.replaceScene(this.get('inScene'));
+        
+        // enable events while transitions
+        EventDispatcher.get('sharedDispatcher').set('dispatchEvents', true);
+
+        // issue #267 
+        this.get('outScene').set('visible', true);
+    },
+
+    sceneOrder: function () {
+        this.set('inSceneOnTop', true);
+    },
+
+    draw: function (context, rect) {
+        if (this.get('inSceneOnTop')) {
+            this.get('outScene').visit(context, rect);
+            this.get('inScene').visit(context, rect);
+        } else {
+            this.get('inScene').visit(context, rect);
+            this.get('outScene').visit(context, rect);
+        }
+    },
+    
+    onEnter: function () {
+        TransitionScene.superclass.onEnter.call(this);
+        this.get('inScene').onEnter();
+        // outScene_ should not receive the onEnter callback
+    },
+
+    onExit: function () {
+        TransitionScene.superclass.onExit.call(this);
+        this.get('outScene').onExit();
+        // inScene_ should not receive the onExit callback
+        // only the onEnterTransitionDidFinish
+        if (this.get('inScene').hasOwnProperty('onEnterTransitionDidFinish')) {
+            this.get('inScene').onEnterTransitionDidFinish();
+        }
+    },
+
+    cleanup: function () {
+        TransitionScene.superclass.cleanup.call(this);
+
+        if (this.get('sendCleanupToScene')) {
+            this.get('outScene').cleanup();
+        }
+    }
+});
+
+/**
+ * @class Rotate and zoom out the outgoing scene, and then rotate and zoom in the incoming 
+ *
+ * @memberOf cocos.nodes
+ * @extends cocos.nodes.TransitionScene
+ */
+var TransitionRotoZoom = TransitionScene.extend(/** @lends cocos.nodes.TransitionRotoZoom# */{
+    onEnter: function() {
+        TransitionRotoZoom.superclass.onEnter.call(this);
+        
+        var dur = this.get('duration');
+        this.get('inScene').set('scale', 0.001);
+        this.get('outScene').set('scale', 1.0);
+        
+        this.get('inScene').set('anchorPoint', geo.ccp(0.5, 0.5));
+        this.get('outScene').set('anchorPoint', geo.ccp(0.5, 0.5));
+        
+        var outzoom = [
+            actions.Spawn.initWithActions({actions: [
+                actions.ScaleBy.create({scale: 0.001, duration: dur/2}),
+                actions.RotateBy.create({angle: 360*2, duration: dur/2})
+                ]}),
+            actions.DelayTime.create({duration: dur/2})];
+        
+        // Can't nest sequences or reverse them very easily, so incoming scene actions must be put 
+        // together manually for now...
+        var inzoom = [
+            actions.DelayTime.create({duration: dur/2}),
+            
+            actions.Spawn.initWithActions({actions: [
+                actions.ScaleTo.create({scale: 1.0, duration: dur/2}),
+                actions.RotateBy.create({angle: -360*2, duration: dur/2})
+                ]}),
+            actions.CallFunc.create({
+                target: this,
+                method: this.finish
+            })
+        ];
+        
+        // Sequence init() copies actions
+        this.get('outScene').runAction(actions.Sequence.create({actions: outzoom}));
+        this.get('inScene').runAction(actions.Sequence.create({actions: inzoom}));
+    }
+});
+
+/**
+ * @class Move in from to the left the incoming scene.
+ * @memberOf cocos.nodes
+ * @extends cocos.nodes.TransitionScene
+ */
+var TransitionMoveInL = TransitionScene.extend(/** @lends cocos.nodes.TransitionMoveInL# */{
+    onEnter: function () {
+        TransitionMoveInL.superclass.onEnter.call(this);
+
+        this.initScenes();
+
+        this.get('inScene').runAction(actions.Sequence.create({actions: [
+            this.action(),
+            actions.CallFunc.create({
+                target: this,
+                method: this.finish
+            })]
+        }));
+    },
+    
+    action: function () {
+        return actions.MoveTo.create({
+            position: geo.ccp(0, 0),
+            duration: this.get('duration')
+        });
+    },
+    
+    initScenes: function () {
+        var s = Director.get('sharedDirector').get('winSize');
+        this.get('inScene').set('position', geo.ccp(-s.width, 0));
+    }
+});
+    
+/**
+ * @class Move in from to the right the incoming scene.
+ * @memberOf cocos.nodes
+ * @extends cocos.nodes.TransitionMoveInL
+ */
+var TransitionMoveInR = TransitionMoveInL.extend(/** @lends cocos.nodes.TransitionMoveInR# */{
+    initScenes: function () {
+        var s = Director.get('sharedDirector').get('winSize');
+        this.get('inScene').set('position', geo.ccp(s.width, 0));
+    }
+});
+
+/**
+ * @class Move the incoming scene in from the top.
+ * @memberOf cocos.nodes
+ * @extends cocos.nodes.TransitionMoveInL
+ */
+var TransitionMoveInT = TransitionMoveInL.extend(/** @lends cocos.nodes.TransitionMoveInT# */{
+    initScenes: function () {
+        var s = Director.get('sharedDirector').get('winSize');
+        this.get('inScene').set('position', geo.ccp(0, s.height));
+    }
+});
+
+/**
+ * @class Move the incoming scene in from the bottom.
+ * @memberOf cocos.nodes
+ * @extends cocos.nodes.TransitionMoveInL
+ */
+var TransitionMoveInB = TransitionMoveInL.extend(/** @lends cocos.nodes.TransitionMoveInB# */{
+    initScenes: function () {
+        var s = Director.get('sharedDirector').get('winSize');
+        this.get('inScene').set('position', geo.ccp(0, -s.height));
+    }
+});
+
+/**
+ * @class Slide in the incoming scene from the left.
+ * @memberOf cocos.nodes
+ * @extends cocos.nodes.TransitionScene
+ */
+var TransitionSlideInL = TransitionScene.extend(/** @lends cocos.nodes.TransitionSlideInL# */{
+    onEnter: function () {
+        TransitionSlideInL.superclass.onEnter.call(this);
+
+        this.initScenes();
+
+        var movein = this.action();
+        var moveout = this.action();
+        var outAction = actions.Sequence.create({
+            actions: [
+            moveout, 
+            actions.CallFunc.create({
+                target: this,
+                method: this.finish
+            })]
+        });
+        this.get('inScene').runAction(movein);
+        this.get('outScene').runAction(outAction);
+    },
+
+    sceneOrder: function () {
+        this.set('inSceneOnTop', false);
+    },
+
+    initScenes: function () {
+        var s = Director.get('sharedDirector').get('winSize');
+        this.get('inScene').set('position', geo.ccp(-s.width, 0));
+    },
+    
+    action: function () {
+        var s = Director.get('sharedDirector').get('winSize');
+        return actions.MoveBy.create({
+            position: geo.ccp(s.width, 0),
+            duration: this.get('duration')
+        });
+    }
+});
+
+/** 
+ * @class Slide in the incoming scene from the right.
+ * @memberOf cocos.nodes
+ * @extends cocos.nodes.TransitionSlideInL
+ */
+var TransitionSlideInR = TransitionSlideInL.extend(/** @lends cocos.nodes.TransitionSlideInR# */{
+    sceneOrder: function () {
+        this.set('inSceneOnTop', true);
+    },
+
+    initScenes: function () {
+        var s = Director.get('sharedDirector').get('winSize');
+        this.get('inScene').set('position', geo.ccp(s.width, 0));
+    },
+    
+    action: function () {
+        var s = Director.get('sharedDirector').get('winSize');
+        return actions.MoveBy.create({
+            position: geo.ccp(-s.width, 0),
+            duration: this.get('duration')
+        });
+    }
+});
+
+/**
+ * @class Slide in the incoming scene from the top.
+ * @memberOf cocos.nodes
+ * @extends cocos.nodes.TransitionSlideInL
+ */
+var TransitionSlideInT = TransitionSlideInL.extend(/** @lends cocos.nodes.TransitionSlideInT# */{
+    sceneOrder: function () {
+        this.set('inSceneOnTop', false);
+    },
+
+    initScenes: function () {
+        var s = Director.get('sharedDirector').get('winSize');
+        this.get('inScene').set('position', geo.ccp(0, s.height));
+    },
+    
+    action: function () {
+        var s = Director.get('sharedDirector').get('winSize');
+        return actions.MoveBy.create({
+            position: geo.ccp(0, -s.height),
+            duration: this.get('duration')
+        });
+    }
+});
+
+/**
+ * @class Slide in the incoming scene from the bottom.
+ * @memberOf cocos.nodes
+ * @extends cocos.nodes.TransitionSlideInL
+ */
+var TransitionSlideInB = TransitionSlideInL.extend(/** @lends cocos.nodes.TransitionSlideInB# */{
+    sceneOrder: function () {
+        this.set('inSceneOnTop', true);
+    },
+
+    initScenes: function () {
+        var s = Director.get('sharedDirector').get('winSize');
+        this.get('inScene').set('position', geo.ccp(0, -s.height));
+    },
+    
+    action: function () {
+        var s = Director.get('sharedDirector').get('winSize');
+        return actions.MoveBy.create({
+            position: geo.ccp(0, s.height),
+            duration: this.get('duration')
+        });
+    }
+});
+
+exports.TransitionScene = TransitionScene;
+exports.TransitionRotoZoom = TransitionRotoZoom;
+exports.TransitionMoveInL = TransitionMoveInL;
+exports.TransitionMoveInR = TransitionMoveInR;
+exports.TransitionMoveInT = TransitionMoveInT;
+exports.TransitionMoveInB = TransitionMoveInB;
+exports.TransitionSlideInL = TransitionSlideInL;
+exports.TransitionSlideInR = TransitionSlideInR;
+exports.TransitionSlideInT = TransitionSlideInT;
+exports.TransitionSlideInB = TransitionSlideInB;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/Transition.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/Sprite.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    evt = require('events'),
+    Director = require('../Director').Director,
+    TextureAtlas = require('../TextureAtlas').TextureAtlas,
+    Node = require('./Node').Node,
+    geo = require('geometry'),
+    ccp = geo.ccp;
+
+var Sprite = Node.extend(/** @lends cocos.nodes.Sprite# */{
+    textureAtlas: null,
+    rect: null,
+    dirty: true,
+    recursiveDirty: true,
+    quad: null,
+    flipX: false,
+    flipY: false,
+    offsetPosition: null,
+    unflippedOffsetPositionFromCenter: null,
+    untrimmedSize: null,
+
+    /**
+     * A small 2D graphics than can be animated
+     *
+     * @memberOf cocos.nodes
+     * @constructs
+     * @extends cocos.nodes.Node
+     *
+     * @opt {String} file Path to image to use as sprite atlas
+     * @opt {Rect} [rect] The rect in the sprite atlas image file to use as the sprite
+     */
+    init: function (opts) {
+        Sprite.superclass.init.call(this, opts);
+
+        opts = opts || {};
+
+        var file         = opts.file,
+            textureAtlas = opts.textureAtlas,
+            texture      = opts.texture,
+            frame        = opts.frame,
+            spritesheet  = opts.spritesheet,
+            rect         = opts.rect;
+
+        this.set('offsetPosition', ccp(0, 0));
+        this.set('unflippedOffsetPositionFromCenter', ccp(0, 0));
+
+
+        if (frame) {
+            texture = frame.get('texture');
+            rect    = frame.get('rect');
+        }
+
+        util.each(['scale', 'scaleX', 'scaleY', 'rect', 'flipX', 'flipY', 'contentSize'], util.callback(this, function (key) {
+            evt.addListener(this, key.toLowerCase() + '_changed', util.callback(this, this._updateQuad));
+        }));
+        evt.addListener(this, 'textureatlas_changed', util.callback(this, this._updateTextureQuad));
+
+        if (file || texture) {
+            textureAtlas = TextureAtlas.create({file: file, texture: texture});
+        } else if (spritesheet) {
+            textureAtlas = spritesheet.get('textureAtlas');
+            this.set('useSpriteSheet', true);
+        } else if (!textureAtlas) {
+            //throw "Sprite has no texture";
+        }
+
+        if (!rect && textureAtlas) {
+            rect = {origin: ccp(0, 0), size: {width: textureAtlas.texture.size.width, height: textureAtlas.texture.size.height}};
+        }
+
+        if (rect) {
+            this.set('rect', rect);
+            this.set('contentSize', rect.size);
+
+            this.quad = {
+                drawRect: {origin: ccp(0, 0), size: rect.size},
+                textureRect: rect
+            };
+        }
+
+        this.set('textureAtlas', textureAtlas);
+
+        if (frame) {
+            this.set('displayFrame', frame);
+        }
+    },
+
+    /**
+     * @private
+     */
+    _updateTextureQuad: function (obj, key, texture, oldTexture) {
+        if (oldTexture) {
+            oldTexture.removeQuad({quad: this.get('quad')});
+        }
+
+        if (texture) {
+            texture.insertQuad({quad: this.get('quad')});
+        }
+    },
+
+    /**
+     * @setter textureCoords
+     * @type geometry.Rect
+     */
+    set_textureCoords: function (rect) {
+        var quad = this.get('quad');
+        if (!quad) {
+            quad = {
+                drawRect: geo.rectMake(0, 0, 0, 0), 
+                textureRect: geo.rectMake(0, 0, 0, 0)
+            };
+        }
+
+        quad.textureRect = util.copy(rect);
+
+        this.set('quad', quad);
+    },
+
+    /**
+     * @setter textureRect
+     * @type geometry.Rect
+     */
+    set_textureRect: function (opts) {
+        var rect = opts.rect,
+            rotated = !!opts.rotated,
+            untrimmedSize = opts.untrimmedSize || rect.size;
+
+        this.set('contentSize', untrimmedSize);
+        this.set('rect', util.copy(rect));
+        this.set('textureCoords', rect);
+
+        var quad = this.get('quad');
+
+        var relativeOffset = util.copy(this.get('unflippedOffsetPositionFromCenter'));
+
+        if (this.get('flipX')) {
+            relativeOffset.x = -relativeOffset.x;
+        }
+        if (this.get('flipY')) {
+            relativeOffset.y = -relativeOffset.y;
+        }
+
+        var offsetPosition = util.copy(this.get('offsetPosition'));
+        offsetPosition.x =  relativeOffset.x + (this.get('contentSize').width  - rect.size.width) / 2;
+        offsetPosition.y = -relativeOffset.y + (this.get('contentSize').height - rect.size.height) / 2;
+
+        quad.drawRect.origin = util.copy(offsetPosition);
+        quad.drawRect.size = util.copy(rect.size);
+        if (this.flipX) {
+            quad.drawRect.size.width *= -1;
+            quad.drawRect.origin.x = -rect.size.width;
+        }
+        if (this.flipY) {
+            quad.drawRect.size.height *= -1;
+            quad.drawRect.origin.y = -rect.size.height;
+        }
+
+        this.set('quad', quad);
+    },
+
+    /**
+     * @private
+     */
+    _updateQuad: function () {
+        if (!this.get('rect')) {
+            return;
+        }
+        if (!this.quad) {
+            this.quad = {
+                drawRect: geo.rectMake(0, 0, 0, 0), 
+                textureRect: geo.rectMake(0, 0, 0, 0)
+            };
+        }
+
+        var relativeOffset = util.copy(this.get('unflippedOffsetPositionFromCenter'));
+
+        if (this.get('flipX')) {
+            relativeOffset.x = -relativeOffset.x;
+        }
+        if (this.get('flipY')) {
+            relativeOffset.y = -relativeOffset.y;
+        }
+
+        var offsetPosition = util.copy(this.get('offsetPosition'));
+        offsetPosition.x = relativeOffset.x + (this.get('contentSize').width  - this.get('rect').size.width) / 2;
+        offsetPosition.y = relativeOffset.y + (this.get('contentSize').height - this.get('rect').size.height) / 2;
+
+        this.quad.textureRect = util.copy(this.rect);
+        this.quad.drawRect.origin = util.copy(offsetPosition);
+        this.quad.drawRect.size = util.copy(this.rect.size);
+
+        if (this.flipX) {
+            this.quad.drawRect.size.width *= -1;
+            this.quad.drawRect.origin.x = -this.rect.size.width;
+        }
+        if (this.flipY) {
+            this.quad.drawRect.size.height *= -1;
+            this.quad.drawRect.origin.y = -this.rect.size.height;
+        }
+    },
+
+    updateTransform: function (ctx) {
+        if (!this.useSpriteSheet) {
+            throw "updateTransform is only valid when Sprite is being rendered using a SpriteSheet";
+        }
+
+        if (!this.visible) {
+            this.set('dirty', false);
+            this.set('recursiveDirty', false);
+            return;
+        }
+
+        // TextureAtlas has hard reference to this quad so we can just update it directly
+        this.quad.drawRect.origin = {
+            x: this.position.x - this.anchorPointInPixels.x * this.scaleX,
+            y: this.position.y - this.anchorPointInPixels.y * this.scaleY
+        };
+        this.quad.drawRect.size = {
+            width: this.rect.size.width * this.scaleX,
+            height: this.rect.size.height * this.scaleY
+        };
+
+        this.set('dirty', false);
+        this.set('recursiveDirty', false);
+    },
+
+    draw: function (ctx) {
+        if (!this.quad) {
+            return;
+        }
+        this.get('textureAtlas').drawQuad(ctx, this.quad);
+    },
+
+    isFrameDisplayed: function (frame) {
+        if (!this.rect || !this.textureAtlas) {
+            return false;
+        }
+        return (frame.texture === this.textureAtlas.texture && geo.rectEqualToRect(frame.rect, this.rect));
+    },
+
+
+    /**
+     * @setter displayFrame
+     * @type cocos.SpriteFrame
+     */
+    set_displayFrame: function (frame) {
+        if (!frame) {
+            delete this.quad;
+            return;
+        }
+        this.set('unflippedOffsetPositionFromCenter', util.copy(frame.offset));
+
+
+        // change texture
+        if (!this.textureAtlas || frame.texture !== this.textureAtlas.texture) {
+            this.set('textureAtlas', TextureAtlas.create({texture: frame.texture}));
+        }
+
+        this.set('textureRect', {rect: frame.rect, rotated: frame.rotated, untrimmedSize: frame.originalSize});
+    }
+});
+
+module.exports.Sprite = Sprite;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/Sprite.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/Menu.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    Layer = require('./Layer').Layer,
+    Director = require('../Director').Director,
+    MenuItem = require('./MenuItem').MenuItem,
+    geom = require('geometry'), ccp = geom.ccp;
+
+/**
+ * @private
+ * @constant
+ */
+var kMenuStateWaiting = 0;
+
+/**
+ * @private
+ * @constant
+ */
+var kMenuStateTrackingTouch = 1;
+    
+
+var Menu = Layer.extend(/** @lends cocos.nodes.Menu# */{
+    mouseDelegatePriority: (-Number.MAX_VALUE + 1),
+    state: kMenuStateWaiting,
+    selectedItem: null,
+    color: null,
+
+    /**
+     * A fullscreen node used to render a selection of menu options
+     *
+     * @memberOf cocos.nodes
+     * @constructs
+     * @extends cocos.nodes.Layer
+     *
+     * @opt {cocos.nodes.MenuItem[]} items An array of MenuItems to draw on the menu
+     */
+    init: function (opts) {
+        Menu.superclass.init.call(this, opts);
+
+        var items = opts.items;
+
+        this.set('isMouseEnabled', true);
+        
+        var s = Director.get('sharedDirector').get('winSize');
+
+        this.set('isRelativeAnchorPoint', false);
+        this.anchorPoint = ccp(0.5, 0.5);
+        this.set('contentSize', s);
+
+        this.set('position', ccp(s.width / 2, s.height / 2));
+
+
+        if (items) {
+            var z = 0;
+            util.each(items, util.callback(this, function (item) {
+                this.addChild({child: item, z: z++});
+            }));
+        }
+
+        
+    },
+
+    addChild: function (opts) {
+        if (!opts.child instanceof MenuItem) {
+            throw "Menu only supports MenuItem objects as children";
+        }
+
+        Menu.superclass.addChild.call(this, opts);
+    },
+
+    itemForMouseEvent: function (event) {
+        var location = event.locationInCanvas;
+
+        var children = this.get('children');
+        for (var i = 0, len = children.length; i < len; i++) {
+            var item = children[i];
+
+            if (item.get('visible') && item.get('isEnabled')) {
+                var local = item.convertToNodeSpace(location);
+                
+                var r = item.get('rect');
+                r.origin = ccp(0, 0);
+
+                if (geom.rectContainsPoint(r, local)) {
+                    return item;
+                }
+
+            }
+        }
+
+        return null;
+    },
+
+    mouseUp: function (event) {
+        var selItem = this.get('selectedItem');
+
+        if (selItem) {
+            selItem.unselected();
+            selItem.activate();
+        }
+
+        if (this.state != kMenuStateWaiting) {
+            this.set('state', kMenuStateWaiting);
+        }
+        if (selItem) {
+            return true;
+        }
+        return false;
+
+    },
+    mouseDown: function (event) {
+        if (this.state != kMenuStateWaiting || !this.visible) {
+            return false;
+        }
+
+        var selectedItem = this.itemForMouseEvent(event);
+        this.set('selectedItem', selectedItem);
+        if (selectedItem) {
+            selectedItem.selected()
+            this.set('state', kMenuStateTrackingTouch);
+
+            return true;
+        }
+
+        return false;
+    },
+
+    mouseDragged: function (event) {
+        var currentItem = this.itemForMouseEvent(event);
+
+        if (currentItem != this.selectedItem) {
+            if (this.selectedItem) {
+                this.selectedItem.unselected();
+            }
+            this.set('selectedItem', currentItem);
+            if (this.selectedItem) {
+                this.selectedItem.selected();
+            }
+        }
+
+        if (currentItem && this.state == kMenuStateTrackingTouch) {
+            return true;
+        }
+
+        return false;
+        
+    }
+
+});
+
+exports.Menu = Menu;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/Menu.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/Node.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    evt = require('events'),
+    Scheduler = require('../Scheduler').Scheduler,
+    ActionManager = require('../ActionManager').ActionManager,
+    geo = require('geometry'), ccp = geo.ccp;
+
+var Node = BObject.extend(/** @lends cocos.nodes.Node# */{
+    isCocosNode: true,
+
+    /**
+     * Is the node visible
+     * @type boolean
+     */
+    visible: true,
+
+    /**
+     * Position relative to parent node
+     * @type geometry.Point
+     */
+    position: null,
+
+    /**
+     * Parent node
+     * @type cocos.nodes.Node
+     */
+    parent: null,
+
+    /**
+     * Unique tag to identify the node
+     * @type *
+     */
+    tag: null,
+
+    /**
+     * Size of the node
+     * @type geometry.Size
+     */
+    contentSize: null,
+
+    /**
+     * Nodes Z index. i.e. draw order
+     * @type Integer
+     */
+    zOrder: 0,
+
+    /**
+     * Anchor point for scaling and rotation. 0x0 is top left and 1x1 is bottom right
+     * @type geometry.Point
+     */
+    anchorPoint: null,
+
+    /**
+     * Anchor point for scaling and rotation in pixels from top left
+     * @type geometry.Point
+     */
+    anchorPointInPixels: null,
+
+    /**
+     * Rotation angle in degrees
+     * @type Float
+     */
+    rotation: 0,
+
+    /**
+     * X scale factor
+     * @type Float
+     */
+    scaleX: 1,
+
+    /**
+     * Y scale factor
+     * @type Float
+     */
+    scaleY: 1,
+
+    /**
+     * Opacity of the Node. 0 is totally transparent, 255 is totally opaque
+     * @type Float
+     */
+    opacity: 255,
+
+    isRunning: false,
+    isRelativeAnchorPoint: true,
+
+    isTransformDirty: true,
+    isInverseDirty: true,
+    inverse: null,
+    transformMatrix: null,
+
+    /**
+     * The child Nodes
+     * @type cocos.nodes.Node[]
+     */
+    children: null,
+
+    /**
+     * @memberOf cocos.nodes
+     * @class The base class all visual elements extend from
+     * @extends BObject
+     * @constructs
+     */
+    init: function () {
+        Node.superclass.init.call(this);
+        this.set('contentSize', {width: 0, height: 0});
+        this.anchorPoint = ccp(0.5, 0.5);
+        this.anchorPointInPixels = ccp(0, 0);
+        this.position = ccp(0, 0);
+        this.children = [];
+
+        util.each(['scaleX', 'scaleY', 'rotation', 'position', 'anchorPoint', 'contentSize', 'isRelativeAnchorPoint'], util.callback(this, function (key) {
+            evt.addListener(this, key.toLowerCase() + '_changed', util.callback(this, this._dirtyTransform));
+        }));
+        evt.addListener(this, 'anchorpoint_changed', util.callback(this, this._updateAnchorPointInPixels));
+        evt.addListener(this, 'contentsize_changed', util.callback(this, this._updateAnchorPointInPixels));
+    },
+
+    /**
+     * Calculates the anchor point in pixels and updates the
+     * anchorPointInPixels property
+     * @private
+     */
+    _updateAnchorPointInPixels: function () {
+        var ap = this.get('anchorPoint'),
+            cs = this.get('contentSize');
+        this.set('anchorPointInPixels', ccp(cs.width * ap.x, cs.height * ap.y));
+    },
+
+    /**
+     * Add a child Node
+     *
+     * @opt {cocos.nodes.Node} child The child node to add
+     * @opt {Integer} [z] Z Index for the child
+     * @opt {Integer|String} [tag] A tag to reference the child with
+     * @returns {cocos.nodes.Node} The node the child was added to. i.e. 'this'
+     */
+    addChild: function (opts) {
+        if (opts.isCocosNode) {
+            return this.addChild({child: opts});
+        }
+
+        var child = opts.child,
+            z = opts.z,
+            tag = opts.tag;
+
+        if (z === undefined || z === null) {
+            z = child.get('zOrder');
+        }
+
+        //this.insertChild({child: child, z:z});
+        var added = false;
+
+
+        for (var i = 0, childLen = this.children.length; i < childLen; i++) {
+            var c = this.children[i];
+            if (c.zOrder > z) {
+                added = true;
+                this.children.splice(i, 0, child);
+                break;
+            }
+        }
+
+        if (!added) {
+            this.children.push(child);
+        }
+
+        child.set('tag', tag);
+        child.set('zOrder', z);
+        child.set('parent', this);
+
+        if (this.isRunning) {
+            child.onEnter();
+        }
+
+        return this;
+    },
+    getChild: function (opts) {
+        var tag = opts.tag;
+
+        for (var i = 0; i < this.children.length; i++) {
+            if (this.children[i].tag == tag) {
+                return this.children[i];
+            }
+        }
+
+        return null;
+    },
+
+    removeChild: function (opts) {
+        if (opts.isCocosNode) {
+            return this.removeChild({child: opts});
+        }
+
+        var child = opts.child,
+            cleanup = opts.cleanup;
+
+        if (!child) {
+            return;
+        }
+
+        var children = this.get('children'),
+            idx = children.indexOf(child);
+
+        if (idx > -1) {
+            this.detatchChild({child: child, cleanup: cleanup});
+        }
+    },
+
+    removeChildren: function(opts) {
+        var children = this.get('children'),
+            isRunning = this.get('isRunning');
+        
+        // Perform cleanup on each child but can't call removeChild() 
+        // due to Array.splice's destructive nature during iteration.
+        for (var i = 0; i < children.length; i++) {
+            if (opts.cleanup) {
+                children[i].cleanup();
+            }
+            if (isRunning) {
+                children[i].onExit();
+            }
+            children[i].set('parent', null);
+        }
+        // Now safe to empty children list
+        this.children = [];
+    },
+    
+    detatchChild: function (opts) {
+        var child = opts.child,
+            cleanup = opts.cleanup;
+
+        var children = this.get('children'),
+            isRunning = this.get('isRunning'),
+            idx = children.indexOf(child);
+
+        if (isRunning) {
+            child.onExit();
+        }
+
+        if (cleanup) {
+            child.cleanup();
+        }
+
+        child.set('parent', null);
+        children.splice(idx, 1);
+    },
+
+    reorderChild: function (opts) {
+        var child = opts.child,
+            z     = opts.z;
+
+        var pos = this.children.indexOf(child);
+        if (pos == -1) {
+            throw "Node isn't a child of this node";
+        }
+
+        child.set('zOrder', z);
+
+        // Remove child
+        this.children.splice(pos, 1);
+
+        // Add child back at correct location
+        var added = false;
+        for (var i = 0, childLen = this.children.length; i < childLen; i++) {
+            var c = this.children[i];
+            if (c.zOrder > z) {
+                added = true;
+                this.children.splice(i, 0, child);
+                break;
+            }
+        }
+
+        if (!added) {
+            this.children.push(child);
+        }
+    },
+
+    /**
+     * Draws the node. Override to do custom drawing. If it's less efficient to
+     * draw only the area inside the rect then don't bother. The result will be
+     * clipped to that area anyway.
+     *
+     * @param {CanvasRenderingContext2D|WebGLRenderingContext} context Canvas rendering context
+     * @param {geometry.Rect} rect Rectangular region that needs redrawing. Limit drawing to this area only if it's more efficient to do so.
+     */
+    draw: function (context, rect) {
+        // All draw code goes here
+    },
+
+    /**
+     * @getter scale
+     * @type Float
+     */
+    get_scale: function () {
+        if (this.scaleX != this.scaleY) {
+            throw "scaleX and scaleY aren't identical";
+        }
+
+        return this.scaleX;
+    },
+
+    /**
+     * @setter scale
+     * @type Float
+     */
+    set_scale: function (val) {
+        this.set('scaleX', val);
+        this.set('scaleY', val);
+    },
+		
+    scheduleUpdate: function (opts) {
+        opts = opts || {};
+        var priority = opts.priority || 0;
+
+        Scheduler.get('sharedScheduler').scheduleUpdate({target: this, priority: priority, paused: !this.get('isRunning')});
+    },
+
+    /**
+     * Triggered when the node is added to a scene
+     *
+     * @event
+     */
+    onEnter: function () {
+        util.each(this.children, function (child) {
+            child.onEnter();
+        });
+
+        this.resumeSchedulerAndActions();
+        this.set('isRunning', true);
+    },
+
+    /**
+     * Triggered when the node is removed from a scene
+     *
+     * @event
+     */
+    onExit: function () {
+        this.pauseSchedulerAndActions();
+        this.set('isRunning', false);
+
+        util.each(this.children, function (child) {
+            child.onExit();
+        });
+    },
+
+    cleanup: function () {
+        this.stopAllActions();
+        this.unscheduleAllSelectors();
+        util.each(this.children, function (child) {
+            child.cleanup();
+        });
+    },
+
+    resumeSchedulerAndActions: function () {
+        Scheduler.get('sharedScheduler').resumeTarget(this);
+        ActionManager.get('sharedManager').resumeTarget(this);
+    },
+    pauseSchedulerAndActions: function () {
+        Scheduler.get('sharedScheduler').pauseTarget(this);
+        ActionManager.get('sharedManager').pauseTarget(this);
+    },
+    unscheduleSelector: function (selector) {
+        Scheduler.get('sharedScheduler').unschedule({target: this, method: selector});
+    },
+    unscheduleAllSelectors: function () {
+        Scheduler.get('sharedScheduler').unscheduleAllSelectorsForTarget(this);
+    },
+    stopAllActions: function () {
+        ActionManager.get('sharedManager').removeAllActionsFromTarget(this);
+    },
+
+    visit: function (context, rect) {
+        if (!this.visible) {
+            return;
+        }
+
+        context.save();
+
+        this.transform(context);
+
+        // Set alpha value (global only for now)
+        context.globalAlpha = this.get('opacity') / 255.0;
+        
+        // Adjust redraw region by nodes position
+        if (rect) {
+            var pos = this.get('position');
+            rect = new geo.Rect(rect.origin.x - pos.x, rect.origin.y - pos.y, rect.size.width, rect.size.height);
+        }
+
+        // Draw background nodes
+        util.each(this.children, function (child, i) {
+            if (child.zOrder < 0) {
+                child.visit(context, rect);
+            }
+        });
+        
+        this.draw(context, rect);
+
+        // Draw foreground nodes
+        util.each(this.children, function (child, i) {
+            if (child.zOrder >= 0) {
+                child.visit(context, rect);
+            }
+        });
+
+        context.restore();
+    },
+    transform: function (context) {
+        // Translate
+        if (this.isRelativeAnchorPoint && (this.anchorPointInPixels.x !== 0 || this.anchorPointInPixels.y !== 0)) {
+            context.translate(Math.round(-this.anchorPointInPixels.x), Math.round(-this.anchorPointInPixels.y));
+        }
+
+        if (this.anchorPointInPixels.x !== 0 || this.anchorPointInPixels.y !== 0) {
+            context.translate(Math.round(this.position.x + this.anchorPointInPixels.x), Math.round(this.position.y + this.anchorPointInPixels.y));
+        } else {
+            context.translate(Math.round(this.position.x), Math.round(this.position.y));
+        }
+
+        // Rotate
+        context.rotate(geo.degreesToRadians(this.get('rotation')));
+
+        // Scale
+        context.scale(this.scaleX, this.scaleY);
+
+        if (this.anchorPointInPixels.x !== 0 || this.anchorPointInPixels.y !== 0) {
+            context.translate(Math.round(-this.anchorPointInPixels.x), Math.round(-this.anchorPointInPixels.y));
+        }
+    },
+
+    runAction: function (action) {
+        ActionManager.get('sharedManager').addAction({action: action, target: this, paused: this.get('isRunning')});
+    },
+    
+    /**
+     * @opts {String} tag Tag of the action to return
+     */
+    getAction: function(opts) {
+        return ActionManager.get('sharedManager').getActionFromTarget({target: this, tag: opts.tag});
+    },
+    
+    nodeToParentTransform: function () {
+        if (this.isTransformDirty) {
+            this.transformMatrix = geo.affineTransformIdentity();
+
+            if (!this.isRelativeAnchorPoint && !geo.pointEqualToPoint(this.anchorPointInPixels, ccp(0, 0))) {
+                this.transformMatrix = geo.affineTransformTranslate(this.transformMatrix, this.anchorPointInPixels.x, this.anchorPointInPixels.y);
+            }
+
+            if (!geo.pointEqualToPoint(this.position, ccp(0, 0))) {
+                this.transformMatrix = geo.affineTransformTranslate(this.transformMatrix, this.position.x, this.position.y);
+            }
+
+            if (this.rotation !== 0) {
+                this.transformMatrix = geo.affineTransformRotate(this.transformMatrix, -geo.degreesToRadians(this.rotation));
+            }
+            if (!(this.scaleX == 1 && this.scaleY == 1)) {
+                this.transformMatrix = geo.affineTransformScale(this.transformMatrix, this.scaleX, this.scaleY);
+            }
+
+            if (!geo.pointEqualToPoint(this.anchorPointInPixels, ccp(0, 0))) {
+                this.transformMatrix = geo.affineTransformTranslate(this.transformMatrix, -this.anchorPointInPixels.x, -this.anchorPointInPixels.y);
+            }
+
+            this.set('isTransformDirty', false);
+
+        }
+
+        return this.transformMatrix;
+    },
+
+    parentToNodeTransform: function () {
+        // TODO
+    },
+
+    nodeToWorldTransform: function () {
+        var t = this.nodeToParentTransform();
+
+        var p;
+        for (p = this.get('parent'); p; p = p.get('parent')) {
+            t = geo.affineTransformConcat(t, p.nodeToParentTransform());
+        }
+
+        return t;
+    },
+
+    worldToNodeTransform: function () {
+        return geo.affineTransformInvert(this.nodeToWorldTransform());
+    },
+
+    convertToNodeSpace: function (worldPoint) {
+        return geo.pointApplyAffineTransform(worldPoint, this.worldToNodeTransform());
+    },
+
+    /**
+     * @getter boundingBox
+     * @type geometry.Rect
+     */
+    get_boundingBox: function () {
+        var cs = this.get('contentSize');
+        var rect = geo.rectMake(0, 0, cs.width, cs.height);
+        rect = geo.rectApplyAffineTransform(rect, this.nodeToParentTransform());
+        return rect;
+    },
+
+    /**
+     * @getter worldBoundingBox
+     * @type geometry.Rect
+     */
+    get_worldBoundingBox: function () {
+        var cs = this.get('contentSize');
+
+        var rect = geo.rectMake(0, 0, cs.width, cs.height);
+        rect = geo.rectApplyAffineTransform(rect, this.nodeToWorldTransform());
+        return rect;
+    },
+
+    /**
+     * The area of the node currently visible on screen. Returns an rect even
+     * if visible is false.
+     *
+     * @getter visibleRect
+     * @type geometry.Rect
+     */
+    get_visibleRect: function () {
+        var s = require('../Director').Director.get('sharedDirector').get('winSize');
+        var rect = new geo.Rect(
+            0, 0,
+            s.width, s.height
+        );
+
+        return geo.rectApplyAffineTransform(rect, this.worldToNodeTransform());
+    },
+
+    /**
+     * @private
+     */
+    _dirtyTransform: function () {
+        this.set('isTransformDirty', true);
+    },
+
+    /**
+     * Schedules a custom method with an interval time in seconds.
+     * If time is 0 it will be ticked every frame.
+     * If time is 0, it is recommended to use 'scheduleUpdate' instead.
+     * 
+     * If the method is already scheduled, then the interval parameter will
+     * be updated without scheduling it again.
+     *
+     * @opt {String|Function} method Function of method name to schedule
+     * @opt {Float} [interval=0] Interval in seconds
+     */
+    schedule: function (opts) {
+        if (typeof opts == 'string') {
+            return this.schedule({method: opts, interval: 0});
+        }
+
+        opts.interval = opts.interval || 0;
+
+        Scheduler.get('sharedScheduler').schedule({target: this, method: opts.method, interval: opts.interval, paused: this.isRunning});
+    },
+
+    /**
+     * Unschedules a custom method
+     *
+     * @param {String|Function} method
+     */
+    unschedule: function (method) {
+        if (!method) {
+            return;
+        }
+
+        if (typeof method == 'string') {
+            method = this[method];
+        }
+        
+        Scheduler.get('sharedScheduler').unschedule({target: this, method: method});
+    }
+
+});
+
+module.exports.Node = Node;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/Node.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/PreloadScene.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var Scene       = require('./Scene').Scene,
+    Director    = require('../Director').Director,
+    Label       = require('./Label').Label,
+    ProgressBar = require('./ProgressBar').ProgressBar,
+    Preloader   = require('preloader').Preloader,
+    RemoteResource = require('remote_resources').RemoteResource,
+    geo         = require('geometry'),
+    util        = require('util'),
+    events      = require('events');
+
+var PreloadScene = Scene.extend(/** @lends cocos.nodes.PreloadScene# */{
+    progressBar: null,
+    label: null,
+    preloader: null,
+    isReady: false, // True when both progress bar images have loaded
+    emptyImage: "/libs/cocos2d/resources/progress-bar-empty.png",
+    fullImage:  "/libs/cocos2d/resources/progress-bar-full.png",
+
+    /**
+     * @memberOf cocos.nodes
+     * @extends cocos.nodes.Scene
+     * @constructs
+     */
+    init: function (opts) {
+        PreloadScene.superclass.init.call(this, opts);
+        var size = Director.get('sharedDirector').get('winSize');
+
+        // Setup 'please wait' label
+        var label = Label.create({
+            fontSize: 14,
+            fontName: 'Helvetica',
+            fontColor: '#ffffff',
+            string: 'Please wait...'
+        });
+        label.set('position', new geo.Point(size.width / 2, (size.height / 2) + 32));
+        this.set('label', label);
+        this.addChild({child: label});
+
+        // Setup preloader
+        var preloader = new Preloader();    // The main preloader
+        preloader.addEverythingToQueue()
+        this.set('preloader', preloader);
+
+        // Listen for preload events
+        events.addListener(preloader, 'load', function (preloader, uri) {
+            var loaded = preloader.loaded,
+                count = preloader.count;
+            events.trigger(this, 'load', preloader, uri);
+        }.bind(this));
+
+        events.addListener(preloader, 'complete', function (preloader) {
+            events.trigger(this, 'complete', preloader);
+        }.bind(this));
+
+
+
+
+        // Preloader for the loading screen resources
+        var loadingPreloader = new Preloader([this.get('emptyImage'), this.get('fullImage')])
+
+        // When loading screen resources have loaded then draw them
+        events.addListener(loadingPreloader, 'complete', function (preloader) {
+            this.createProgressBar();
+            if (this.get('isRunning')) {
+                this.get('preloader').load();
+            }
+
+            this.isReady = true;
+        }.bind(this));
+
+        loadingPreloader.load()
+    },
+
+    createProgressBar: function () {
+        var preloader = this.get('preloader'),
+            size = Director.get('sharedDirector').get('winSize');
+
+        var progressBar = ProgressBar.create({
+            emptyImage: "/libs/cocos2d/resources/progress-bar-empty.png",
+            fullImage:  "/libs/cocos2d/resources/progress-bar-full.png"
+        });
+
+        progressBar.set('position', new geo.Point(size.width / 2, size.height / 2));
+
+        this.set('progressBar', progressBar);
+        this.addChild({child: progressBar});
+
+        events.addListener(preloader, 'load', function (preloader, uri) {
+            progressBar.set('maxValue', preloader.count);
+            progressBar.set('value', preloader.loaded);
+        })
+    },
+
+    onEnter: function () {
+        PreloadScene.superclass.onEnter.call(this);
+        var preloader = this.get('preloader');
+
+        // Preload everything
+        if (this.isReady) {
+            preloader.load();
+        }
+    }
+});
+
+exports.PreloadScene = PreloadScene;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/PreloadScene.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/ProgressBar.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var Node   = require('./Node').Node,
+    util   = require('util'),
+    geo    = require('geometry'),
+    events = require('events'),
+    Sprite = require('./Sprite').Sprite;
+
+var ProgressBar = Node.extend(/** @lends cocos.nodes.ProgressBar# */{
+    emptySprite: null,
+    fullSprite: null,
+    maxValue: 100,
+    value: 0,
+
+    /**
+     * @memberOf cocos.nodes
+     * @extends cocos.nodes.Node
+     * @constructs
+     */
+    init: function (opts) {
+        ProgressBar.superclass.init.call(this, opts);
+        var size = new geo.Size(272, 32);
+        this.set('contentSize', size);
+
+        var s;
+        if (opts.emptyImage) {
+            s = Sprite.create({file: opts.emptyImage, rect: new geo.Rect(0, 0, size.width, size.height)});
+            s.set('anchorPoint', new geo.Point(0, 0));
+            this.set('emptySprite', s);
+            this.addChild({child: s});
+        }
+        if (opts.fullImage) {
+            s = Sprite.create({file: opts.fullImage, rect: new geo.Rect(0, 0, 0, size.height)});
+            s.set('anchorPoint', new geo.Point(0, 0));
+            this.set('fullSprite', s);
+            this.addChild({child: s});
+        }
+
+        events.addListener(this, 'maxvalue_changed', util.callback(this, 'updateImages'));
+        events.addListener(this, 'value_changed', util.callback(this, 'updateImages'));
+
+        this.updateImages();
+    },
+
+    updateImages: function () {
+        var empty = this.get('emptySprite'),
+            full  = this.get('fullSprite'),
+            value = this.get('value'),
+            size  = this.get('contentSize'),
+            maxValue = this.get('maxValue'),
+            ratio = (value / maxValue);
+
+        var diff = Math.round(size.width * ratio);
+        if (diff === 0) {
+            full.set('visible', false);
+        } else {
+            full.set('visible', true);
+            full.set('rect', new geo.Rect(0, 0, diff, size.height));
+            full.set('contentSize', new geo.Size(diff, size.height));
+        }
+
+        if ((size.width - diff) === 0) {
+            empty.set('visible', false);
+        } else {
+            empty.set('visible', true);
+            empty.set('rect', new geo.Rect(diff, 0, size.width - diff, size.height));
+            empty.set('position', new geo.Point(diff, 0));
+            empty.set('contentSize', new geo.Size(size.width - diff, size.height));
+        }
+    }
+});
+
+exports.ProgressBar = ProgressBar;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/ProgressBar.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/LabelAtlas.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var AtlasNode = require('./AtlasNode').AtlasNode,
+    Sprite = require('./Sprite').Sprite,
+    geo   = require('geometry');
+
+var LabelAtlas = AtlasNode.extend(/** @lends cocos.nodes.LabelAtlas# */{
+    string: '',
+
+    mapStartChar: '',
+
+    /**
+     * @memberOf cocos.nodes
+     * @extends cocos.nodes.BatchNode
+     * @constructs
+     *
+     * @opt {String} [string=] Initial text to draw
+     * @opt {String} charMapFile
+     * @opt {Integer} itemWidth
+     * @opt {Integer} itemHeight
+     * @opt {String} startCharMap Single character
+     */
+    init: function (opts) {
+        LabelAtlas.superclass.init.call(this, {
+            file: opts.charMapFile,
+            itemWidth: opts.itemWidth,
+            itemHeight: opts.itemHeight,
+            itemsToRender: opts.string.length,
+            size: new geo.Size(opts.itemWidth * opts.string.length, opts.itemHeight)
+        });
+
+
+        this.mapStartChar = opts.startCharMap.charCodeAt(0);
+        this.set('string', opts.string);
+    },
+
+    updateAtlasValue: function () {
+        var n = this.string.length,
+            s = this.get('string');
+    
+        // FIXME this should reuse children to improve performance
+        while (this.children.length > 0) {
+            this.removeChild(this.children[0]);
+        }
+        for (var i = 0; i < n; i++) {
+            var a = s.charCodeAt(i) - this.mapStartChar,
+                row = (a % this.itemsPerRow),
+                col = Math.floor(a / this.itemsPerRow);
+    
+            var left = row * this.itemWidth,
+                top  = col * this.itemHeight;
+
+            var tile = Sprite.create({rect: new geo.Rect(left, top, this.itemWidth, this.itemHeight),
+                              textureAtlas: this.textureAtlas});
+
+            tile.set('position', new geo.Point(i * this.itemWidth, 0));
+            tile.set('anchorPoint', new geo.Point(0, 0));
+            tile.set('opacity', this.get('opacity'));
+            
+            this.addChild({child: tile});
+        }
+    },
+
+    set_string: function (newString) {
+        this.string = newString;
+
+        this.updateAtlasValue();
+    }
+});
+
+
+exports.LabelAtlas = LabelAtlas;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/LabelAtlas.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/BatchNode.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray SHOW_REDRAW_REGIONS*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    evt = require('events'),
+    geo = require('geometry'),
+    ccp = geo.ccp,
+    TextureAtlas = require('../TextureAtlas').TextureAtlas,
+    RenderTexture = require('./RenderTexture').RenderTexture,
+    Node = require('./Node').Node;
+
+var BatchNode = Node.extend(/** @lends cocos.nodes.BatchNode# */{
+    partialDraw: false,
+    contentRect: null,
+    renderTexture: null,
+    dirty: true,
+
+    /**
+     * Region to redraw
+     * @type geometry.Rect
+     */
+    dirtyRegion: null,
+    dynamicResize: false,
+
+    /** @private
+     * Areas that need redrawing
+     *
+     * Not implemented
+     */
+    _dirtyRects: null,
+
+
+    /**
+     * Draws all children to an in-memory canvas and only redraws when something changes
+     *
+     * @memberOf cocos.nodes
+     * @constructs
+     * @extends cocos.nodes.Node
+     *
+     * @opt {geometry.Size} size The size of the in-memory canvas used for drawing to
+     * @opt {Boolean} [partialDraw=false] Draw only the area visible on screen. Small maps may be slower in some browsers if this is true.
+     */
+    init: function (opts) {
+        BatchNode.superclass.init.call(this, opts);
+
+        var size = opts.size || geo.sizeMake(1, 1);
+        this.set('partialDraw', opts.partialDraw);
+
+        evt.addListener(this, 'contentsize_changed', util.callback(this, this._resizeCanvas));
+        
+        this._dirtyRects = [];
+        this.set('contentRect', geo.rectMake(0, 0, size.width, size.height));
+        this.renderTexture = RenderTexture.create(size);
+        this.renderTexture.sprite.set('isRelativeAnchorPoint', false);
+        this.addChild({child: this.renderTexture});
+    },
+
+    addChild: function (opts) {
+        BatchNode.superclass.addChild.call(this, opts);
+
+        var child = opts.child,
+            z     = opts.z;
+
+        if (child == this.renderTexture) {
+            return;
+        }
+
+        // TODO handle texture resize
+
+        // Watch for changes in child
+        var watchEvents = ['position_before_changed',
+                           'scalex_before_changed',
+                           'scaley_before_changed',
+                           'rotation_before_changed',
+                           'anchorpoint_before_changed',
+                           'opacity_before_changed',
+                           'visible_before_changed'];
+        evt.addListener(child, watchEvents, util.callback(this, function () {
+            this.addDirtyRegion(child.get('boundingBox'));
+        }));
+
+        this.addDirtyRegion(child.get('boundingBox'));
+    },
+
+    removeChild: function (opts) {
+        BatchNode.superclass.removeChild.call(this, opts);
+
+        // TODO remove istransformdirty_changed and visible_changed listeners
+
+        this.set('dirty', true);
+    },
+
+    addDirtyRegion: function (rect) {
+        // Increase rect slightly to compensate for subpixel artifacts
+        rect = util.copy(rect);
+        rect.origin.x -= 2;
+        rect.origin.y -= 2;
+        rect.size.width += 4;
+        rect.size.height += 4;
+
+        var region = this.get('dirtyRegion');
+        if (!region) {
+            region = rect;
+        } else {
+            region = geo.rectUnion(region, rect);
+        }
+
+        this.set('dirtyRegion', region);
+        this.set('dirty', true);
+    },
+
+    _resizeCanvas: function (oldSize) {
+        var size = this.get('contentSize');
+
+        if (geo.sizeEqualToSize(size, oldSize)) {
+            return; // No change
+        }
+
+
+        this.renderTexture.set('contentSize', size);
+        this.set('dirty', true);
+    },
+
+    update: function () {
+
+    },
+
+    visit: function (context) {
+        if (!this.visible) {
+            return;
+        }
+
+        context.save();
+
+        this.transform(context);
+
+        var rect = this.get('dirtyRegion');
+        // Only redraw if something changed
+        if (this.dirty) {
+
+            if (rect) {
+                if (this.get('partialDraw')) {
+                    // Clip region to visible area
+                    var s = require('../Director').Director.get('sharedDirector').get('winSize'),
+                        p = this.get('position');
+                    var r = new geo.Rect(
+                        0, 0,
+                        s.width, s.height
+                    );
+                    r = geo.rectApplyAffineTransform(r, this.worldToNodeTransform());
+                    rect = geo.rectIntersection(r, rect);
+                }
+
+                this.renderTexture.clear(rect);
+
+                this.renderTexture.context.save();
+                this.renderTexture.context.beginPath();
+                this.renderTexture.context.rect(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
+                this.renderTexture.context.clip();
+                this.renderTexture.context.closePath();
+            } else {
+                this.renderTexture.clear();
+            }
+
+            for (var i = 0, childLen = this.children.length; i < childLen; i++) {
+                var c = this.children[i];
+                if (c == this.renderTexture) {
+                    continue;
+                }
+
+                // Draw children inside rect
+                if (!rect || geo.rectOverlapsRect(c.get('boundingBox'), rect)) {
+                    c.visit(this.renderTexture.context, rect);
+                }
+            }
+
+            if (SHOW_REDRAW_REGIONS) {
+                if (rect) {
+                    this.renderTexture.context.beginPath();
+                    this.renderTexture.context.rect(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
+                    this.renderTexture.context.fillStyle = "rgba(0, 0, 255, 0.5)";
+                    this.renderTexture.context.fill();
+                    this.renderTexture.context.closePath();
+                }
+            }
+
+            if (rect) {
+                this.renderTexture.context.restore();
+            }
+
+            this.set('dirty', false);
+            this.set('dirtyRegion', null);
+        }
+
+        this.renderTexture.visit(context);
+
+        context.restore();
+    },
+
+    draw: function (ctx) {
+    },
+
+    onEnter: function () {
+        if (this.get('partialDraw')) {
+            evt.addListener(this.get('parent'), 'istransformdirty_changed', util.callback(this, function () {
+                var box = this.get('visibleRect');
+                this.addDirtyRegion(box);
+            }));
+        }
+    }
+});
+
+var SpriteBatchNode = BatchNode.extend(/** @lends cocos.nodes.SpriteBatchNode# */{
+    textureAtlas: null,
+
+    /**
+     * @memberOf cocos.nodes
+     * @class A BatchNode that accepts only Sprite using the same texture
+     * @extends cocos.nodes.BatchNode
+     * @constructs
+     *
+     * @opt {String} file (Optional) Path to image to use as sprite atlas
+     * @opt {Texture2D} texture (Optional) Texture to use as sprite atlas
+     * @opt {cocos.TextureAtlas} textureAtlas (Optional) TextureAtlas to use as sprite atlas
+     */
+    init: function (opts) {
+        SpriteBatchNode.superclass.init.call(this, opts);
+
+        var file         = opts.file,
+            textureAtlas = opts.textureAtlas,
+            texture      = opts.texture;
+
+        if (file || texture) {
+            textureAtlas = TextureAtlas.create({file: file, texture: texture});
+        }
+
+        this.set('textureAtlas', textureAtlas);
+    },
+
+    /**
+     * @getter texture
+     * @type cocos.Texture2D
+     */
+    get_texture: function () {
+        return this.textureAtlas ? this.textureAtlas.texture : null;
+    },
+
+    set_opacity: function (newOpacity) {
+        this.opacity = newOpacity;
+        for (var i = 0, len = this.children.length; i < len; i++) {
+            var child = this.children[i];
+            child.set('opacity', newOpacity);
+        }
+    }
+
+});
+
+exports.BatchNode = BatchNode;
+exports.SpriteBatchNode = SpriteBatchNode;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/BatchNode.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/TMXTiledMap.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray console*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    geo = require('geometry'),
+    ccp = geo.ccp,
+    Node = require('./Node').Node,
+    TMXOrientationOrtho = require('../TMXOrientation').TMXOrientationOrtho,
+    TMXOrientationHex   = require('../TMXOrientation').TMXOrientationHex,
+    TMXOrientationIso   = require('../TMXOrientation').TMXOrientationIso,
+    TMXLayer   = require('./TMXLayer').TMXLayer,
+    TMXMapInfo = require('../TMXXMLParser').TMXMapInfo;
+
+var TMXTiledMap = Node.extend(/** @lends cocos.nodes.TMXTiledMap# */{
+    mapSize: null,
+    tileSize: null,
+    mapOrientation: 0,
+    objectGroups: null,
+    properties: null,
+    tileProperties: null,
+
+    /**
+     * A TMX Map loaded from a .tmx file
+     *
+     * @memberOf cocos.nodes
+     * @constructs
+     * @extends cocos.nodes.Node
+     *
+     * @opt {String} file The file path of the TMX map to load
+     */
+    init: function (opts) {
+        TMXTiledMap.superclass.init.call(this, opts);
+
+        this.set('anchorPoint', ccp(0, 0));
+
+        var mapInfo = TMXMapInfo.create(opts.file);
+
+        this.mapSize        = mapInfo.get('mapSize');
+        this.tileSize       = mapInfo.get('tileSize');
+        this.mapOrientation = mapInfo.get('orientation');
+        this.objectGroups   = mapInfo.get('objectGroups');
+        this.properties     = mapInfo.get('properties');
+        this.tileProperties = mapInfo.get('tileProperties');
+
+        // Add layers to map
+        var idx = 0;
+        util.each(mapInfo.layers, util.callback(this, function (layerInfo) {
+            if (layerInfo.get('visible')) {
+                var child = this.parseLayer({layerInfo: layerInfo, mapInfo: mapInfo});
+                this.addChild({child: child, z: idx, tag: idx});
+
+                var childSize   = child.get('contentSize');
+                var currentSize = this.get('contentSize');
+                currentSize.width  = Math.max(currentSize.width,  childSize.width);
+                currentSize.height = Math.max(currentSize.height, childSize.height);
+                this.set('contentSize', currentSize);
+
+                idx++;
+            }
+        }));
+    },
+    
+    parseLayer: function (opts) {
+        var tileset = this.tilesetForLayer(opts);
+        var layer = TMXLayer.create({tilesetInfo: tileset, layerInfo: opts.layerInfo, mapInfo: opts.mapInfo});
+
+        layer.setupTiles();
+
+        return layer;
+    },
+
+    tilesetForLayer: function (opts) {
+        var layerInfo = opts.layerInfo,
+            mapInfo = opts.mapInfo,
+            size = layerInfo.get('layerSize');
+
+        // Reverse loop
+        var tileset;
+        for (var i = mapInfo.tilesets.length - 1; i >= 0; i--) {
+            tileset = mapInfo.tilesets[i];
+
+            for (var y = 0; y < size.height; y++) {
+                for (var x = 0; x < size.width; x++) {
+                    var pos = x + size.width * y, 
+                        gid = layerInfo.tiles[pos];
+
+                    if (gid !== 0 && gid >= tileset.firstGID) {
+                        return tileset;
+                    }
+                } // for (var x
+            } // for (var y
+        } // for (var i
+
+        //console.log("cocos2d: Warning: TMX Layer '%s' has no tiles", layerInfo.name);
+        return tileset;
+    },
+
+    /**
+     * Get a layer
+     *
+     * @opt {String} name The name of the layer to get
+     * @returns {cocos.nodes.TMXLayer} The layer requested
+     */
+    getLayer: function (opts) {
+        var layerName = opts.name,
+            layer = null;
+
+        this.get('children').forEach(function (item) {
+            if (item instanceof TMXLayer && item.layerName == layerName) {
+                layer = item;
+            }
+        });
+        if (layer !== null) {
+            return layer;
+        }
+    },
+    
+    /**
+     * Return the ObjectGroup for the secific group
+     *
+     * @opt {String} name The object group name
+     * @returns {cocos.TMXObjectGroup} The object group
+     */
+    getObjectGroup: function (opts) {
+        var objectGroupName = opts.name,
+            objectGroup = null;
+
+        this.objectGroups.forEach(function (item) {
+            if (item.name == objectGroupName) {
+                objectGroup = item;
+            }
+        });
+        if (objectGroup !== null) {
+            return objectGroup;
+        }
+    },
+
+    /**
+     * @deprected Since v0.2. You should now use cocos.TMXTiledMap#getObjectGroup.
+     */
+    objectGroupNamed: function (opts) {
+        console.warn('TMXTiledMap#objectGroupNamed is deprected. Use TMXTiledMap#getObjectGroup instread');
+        return this.getObjectGroup(opts);
+    }
+});
+
+exports.TMXTiledMap = TMXTiledMap;
+
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/TMXTiledMap.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/Label.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray FLIP_Y_AXIS*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    console = require('system').console,
+    Director = require('../Director').Director,
+    Node = require('./Node').Node,
+    ccp = require('geometry').ccp;
+
+var Label = Node.extend(/** @lends cocos.nodes.Label# */{
+    string:   '',
+    fontName: 'Helvetica',
+    fontSize: 16,
+    fontColor: 'white',
+
+    /**
+     * Renders a simple text label
+     *
+     * @constructs
+     * @extends cocos.nodes.Node
+     *
+     * @opt {String} [string=""] The text string to draw
+     * @opt {Float} [fontSize=16] The size of the font
+     * @opt {String} [fontName="Helvetica"] The name of the font to use
+     * @opt {String} [fontColor="white"] The color of the text
+     */
+    init: function (opts) {
+        Label.superclass.init.call(this, opts);
+
+        util.each('fontSize fontName fontColor string'.split(' '), util.callback(this, function (name) {
+            // Set property on init
+            if (opts[name]) {
+                this.set(name, opts[name]);
+            }
+
+            // Update content size
+            this._updateLabelContentSize();
+        }));
+    },
+
+    /** 
+     * String of the font name and size to use in a format &lt;canvas&gt; understands
+     *
+     * @getter font
+     * @type String
+     */
+    get_font: function (key) {
+        return this.get('fontSize') + 'px ' + this.get('fontName');
+    },
+
+    draw: function (context) {
+        if (FLIP_Y_AXIS) {
+            context.save();
+
+            // Flip Y axis
+            context.scale(1, -1);
+            context.translate(0, -this.get('fontSize'));
+        }
+
+
+        context.fillStyle = this.get('fontColor');
+        context.font = this.get('font');
+        context.textBaseline = 'top';
+        if (context.fillText) {
+            context.fillText(this.get('string'), 0, 0);
+        } else if (context.mozDrawText) {
+            context.mozDrawText(this.get('string'));
+        }
+
+        if (FLIP_Y_AXIS) {
+            context.restore();
+        }
+    },
+
+    /**
+     * @private
+     */
+    _updateLabelContentSize: function () {
+        var ctx = Director.get('sharedDirector').get('context');
+        var size = {width: 0, height: this.get('fontSize')};
+
+        var prevFont = ctx.font;
+        ctx.font = this.get('font');
+
+        if (ctx.measureText) {
+            var txtSize = ctx.measureText(this.get('string'));
+            size.width = txtSize.width;
+        } else if (ctx.mozMeasureText) {
+            size.width = ctx.mozMeasureText(this.get('string'));
+        }
+
+        ctx.font = prevFont;
+
+        this.set('contentSize', size);
+    }
+});
+
+module.exports.Label = Label;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/Label.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/RenderTexture.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray FLIP_Y_AXIS*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    evt = require('events'),
+    Node = require('./Node').Node,
+    geo = require('geometry'),
+    Sprite = require('./Sprite').Sprite,
+    TextureAtlas = require('../TextureAtlas').TextureAtlas,
+    ccp = geo.ccp;
+
+var RenderTexture = Node.extend(/** @lends cocos.nodes.RenderTexture# */{
+    canvas: null,
+    context: null,
+    sprite: null,
+
+    /** 
+     * An in-memory canvas which can be drawn to in the background before drawing on screen
+     *
+     * @memberOf cocos.nodes
+     * @constructs
+     * @extends cocos.nodes.Node
+     *
+     * @opt {Integer} width The width of the canvas
+     * @opt {Integer} height The height of the canvas
+     */
+    init: function (opts) {
+        RenderTexture.superclass.init.call(this, opts);
+
+        var width = opts.width,
+            height = opts.height;
+
+        evt.addListener(this, 'contentsize_changed', util.callback(this, this._resizeCanvas));
+
+        this.canvas = document.createElement('canvas');
+        this.context = this.canvas.getContext('2d');
+
+        var atlas = TextureAtlas.create({canvas: this.canvas});
+        this.sprite = Sprite.create({textureAtlas: atlas, rect: {origin: ccp(0, 0), size: {width: width, height: height}}});
+
+        this.set('contentSize', geo.sizeMake(width, height));
+        this.addChild(this.sprite);
+        this.set('anchorPoint', ccp(0, 0));
+        this.sprite.set('anchorPoint', ccp(0, 0));
+
+    },
+
+    /**
+     * @private
+     */
+    _resizeCanvas: function () {
+        var size = this.get('contentSize'),
+            canvas = this.get('canvas');
+
+        canvas.width  = size.width;
+        canvas.height = size.height;
+        if (FLIP_Y_AXIS) {
+            this.context.scale(1, -1);
+            this.context.translate(0, -canvas.height);
+        }
+
+        var s = this.get('sprite');
+        if (s) {
+            s.set('textureRect', {rect: geo.rectMake(0, 0, size.width, size.height)});
+        }
+    },
+
+    /**
+     * Clear the canvas
+     */
+    clear: function (rect) {
+        if (rect) {
+            this.context.clearRect(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
+        } else {
+            this.canvas.width = this.canvas.width;
+            if (FLIP_Y_AXIS) {
+                this.context.scale(1, -1);
+                this.context.translate(0, -this.canvas.height);
+            }
+        }
+    }
+});
+
+module.exports.RenderTexture = RenderTexture;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/RenderTexture.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/AtlasNode.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var SpriteBatchNode = require('./BatchNode').SpriteBatchNode,
+    TextureAtlas = require('../TextureAtlas').TextureAtlas,
+    geo   = require('geometry');
+
+var AtlasNode = SpriteBatchNode.extend(/** @lends cocos.AtlasNode# */{
+    /**
+     * Characters per row
+     * @type Integer
+     */
+    itemsPerRow: 0,
+
+    /**
+     * Characters per column
+     * @type Integer
+     */
+    itemsPerColumn: 0,
+
+    /**
+     * Width of a character
+     * @type Integer
+     */
+    itemWidth: 0,
+
+    /**
+     * Height of a character
+     * @type Integer
+     */
+    itemHeight: 0,
+
+
+    /**
+     * @type cocos.TextureAtlas
+     */
+     textureAtlas: null,
+
+    /**
+     * @class
+     * It knows how to render a TextureAtlas object. If you are going to
+     * render a TextureAtlas consider subclassing cocos.nodes.AtlasNode (or a
+     * subclass of cocos.nodes.AtlasNode)
+     * @memberOf cocos
+     * @extends cocos.nodes.SpriteBatchNode
+     * @constructs
+     *
+     * @opt {String} file Path to Atals image
+     * @opt {Integer} itemWidth Character width
+     * @opt {Integer} itemHeight Character height
+     * @opt {Integer} itemsToRender Quantity of items to render
+     */
+    init: function (opts) {
+        AtlasNode.superclass.init.call(this, opts);
+
+        this.itemWidth = opts.itemWidth;
+        this.itemHeight = opts.itemHeight;
+        
+        this.textureAtlas = TextureAtlas.create({file: opts.file, capacity: opts.itemsToRender});
+
+
+        this._calculateMaxItems();
+    },
+
+    updateAtlasValues: function () {
+        throw "cocos.nodes.AtlasNode:Abstract - updateAtlasValue not overriden";
+    },
+
+    _calculateMaxItems: function () {
+        var s = this.textureAtlas.get('texture.contentSize');
+        this.itemsPerColumn = s.height / this.itemHeight;
+        this.itemsPerRow = s.width / this.itemWidth;
+    }
+});
+
+exports.AtlasNode = AtlasNode;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/AtlasNode.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/TMXLayer.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray FLIP_Y_AXIS*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    SpriteBatchNode = require('./BatchNode').SpriteBatchNode,
+    Sprite = require('./Sprite').Sprite,
+    TMXOrientationOrtho = require('../TMXOrientation').TMXOrientationOrtho,
+    TMXOrientationHex   = require('../TMXOrientation').TMXOrientationHex,
+    TMXOrientationIso   = require('../TMXOrientation').TMXOrientationIso,
+    geo    = require('geometry'),
+    ccp    = geo.ccp,
+    Node = require('./Node').Node;
+
+var TMXLayer = SpriteBatchNode.extend(/** @lends cocos.nodes.TMXLayer# */{
+    layerSize: null,
+    layerName: '',
+    tiles: null,
+    tilset: null,
+    layerOrientation: 0,
+    mapTileSize: null,
+    properties: null,
+
+    /** 
+     * A tile map layer loaded from a TMX file. This will probably automatically be made by cocos.TMXTiledMap
+     *
+     * @memberOf cocos.nodes
+     * @constructs
+     * @extends cocos.nodes.SpriteBatchNode
+     *
+     * @opt {cocos.TMXTilesetInfo} tilesetInfo
+     * @opt {cocos.TMXLayerInfo} layerInfo
+     * @opt {cocos.TMXMapInfo} mapInfo
+     */
+    init: function (opts) {
+        var tilesetInfo = opts.tilesetInfo,
+            layerInfo = opts.layerInfo,
+            mapInfo = opts.mapInfo;
+
+        var size = layerInfo.get('layerSize'),
+            totalNumberOfTiles = size.width * size.height;
+
+        var tex = null;
+        if (tilesetInfo) {
+            tex = tilesetInfo.sourceImage;
+        }
+
+        TMXLayer.superclass.init.call(this, {file: tex});
+
+        this.set('anchorPoint', ccp(0, 0));
+
+        this.layerName = layerInfo.get('name');
+        this.layerSize = layerInfo.get('layerSize');
+        this.tiles = layerInfo.get('tiles');
+        this.minGID = layerInfo.get('minGID');
+        this.maxGID = layerInfo.get('maxGID');
+        this.opacity = layerInfo.get('opacity');
+        this.properties = util.copy(layerInfo.properties);
+
+        this.tileset = tilesetInfo;
+        this.mapTileSize = mapInfo.get('tileSize');
+        this.layerOrientation = mapInfo.get('orientation');
+
+        var offset = this.calculateLayerOffset(layerInfo.get('offset'));
+        this.set('position', offset);
+
+        this.set('contentSize', geo.sizeMake(this.layerSize.width * this.mapTileSize.width, (this.layerSize.height * (this.mapTileSize.height - 1)) + this.tileset.tileSize.height));
+    },
+
+    calculateLayerOffset: function (pos) {
+        var ret = ccp(0, 0);
+
+        switch (this.layerOrientation) {
+        case TMXOrientationOrtho:
+            ret = ccp(pos.x * this.mapTileSize.width, pos.y * this.mapTileSize.height);
+            break;
+        case TMXOrientationIso:
+            // TODO
+            break;
+        case TMXOrientationHex:
+            // TODO
+            break;
+        }
+
+        return ret;
+    },
+
+    setupTiles: function () {
+        this.tileset.bindTo('imageSize', this.get('texture'), 'contentSize');
+
+
+        for (var y = 0; y < this.layerSize.height; y++) {
+            for (var x = 0; x < this.layerSize.width; x++) {
+                
+                var pos = x + this.layerSize.width * y,
+                    gid = this.tiles[pos];
+                
+                if (gid !== 0) {
+                    this.appendTile({gid: gid, position: ccp(x, y)});
+                    
+                    // Optimization: update min and max GID rendered by the layer
+                    this.minGID = Math.min(gid, this.minGID);
+                    this.maxGID = Math.max(gid, this.maxGID);
+                }
+            }
+        }
+    },
+    appendTile: function (opts) {
+        var gid = opts.gid,
+            pos = opts.position;
+
+        var z = pos.x + pos.y * this.layerSize.width;
+            
+        var rect = this.tileset.rectForGID(gid);
+        var tile = Sprite.create({rect: rect, textureAtlas: this.textureAtlas});
+        tile.set('position', this.positionAt(pos));
+        tile.set('anchorPoint', ccp(0, 0));
+        tile.set('opacity', this.get('opacity'));
+        
+        this.addChild({child: tile, z: 0, tag: z});
+    },
+    positionAt: function (pos) {
+        switch (this.layerOrientation) {
+        case TMXOrientationOrtho:
+            return this.positionForOrthoAt(pos);
+        case TMXOrientationIso:
+            return this.positionForIsoAt(pos);
+        /*
+        case TMXOrientationHex:
+            // TODO
+        */
+        default:
+            return ccp(0, 0);
+        }
+    },
+    positionForOrthoAt: function (pos) {
+        var overlap = this.mapTileSize.height - this.tileset.tileSize.height;
+        var x = Math.floor(pos.x * this.mapTileSize.width + 0.49);
+        var y;
+        if (FLIP_Y_AXIS) {
+            y = Math.floor((this.get('layerSize').height - pos.y - 1) * this.mapTileSize.height + 0.49);
+        } else {
+            y = Math.floor(pos.y * this.mapTileSize.height + 0.49) + overlap;
+        }
+        return ccp(x, y);
+    },
+
+    positionForIsoAt: function (pos) {
+        var mapTileSize = this.get('mapTileSize'),
+            layerSize = this.get('layerSize');
+
+        if (FLIP_Y_AXIS) {
+            return ccp(
+                mapTileSize.width  / 2 * (layerSize.width + pos.x - pos.y - 1),
+                mapTileSize.height / 2 * ((layerSize.height * 2 - pos.x - pos.y) - 2)
+            );
+        } else {
+            throw "Isometric tiles without FLIP_Y_AXIS is currently unsupported";
+        }
+    },
+
+    /**
+     * Get the tile at a specifix tile coordinate
+     *
+     * @param {geometry.Point} pos Position of tile to get in tile coordinates (not pixels)
+     * @returns {cocos.nodes.Sprite} The tile
+     */
+    tileAt: function (pos) {
+        var layerSize = this.get('layerSize'),
+            tiles = this.get('tiles');
+
+        if (pos.x < 0 || pos.y < 0 || pos.x >= layerSize.width || pos.y >= layerSize.height) {
+            throw "TMX Layer: Invalid position";
+        }
+
+        var tile,
+            gid = this.tileGIDAt(pos);
+
+        // if GID is 0 then no tile exists at that point
+        if (gid) {
+            var z = pos.x + pos.y * layerSize.width;
+            tile = this.getChild({tag: z});
+        }
+
+        return tile;
+    },
+
+
+    tileGID: function (pos) {
+        var tilesPerRow = this.get('layerSize').width,
+            tilePos = pos.x + (pos.y * tilesPerRow);
+
+        return this.tiles[tilePos];
+    },
+    tileGIDAt: function (pos) {
+        return this.tileGID(pos);
+    },
+
+    removeTile: function (pos) {
+        var gid = this.tileGID(pos);
+        if (gid === 0) {
+            // Tile is already blank
+            return;
+        }
+
+        var tiles = this.get('tiles'),
+            tilesPerRow = this.get('layerSize').width,
+            tilePos = pos.x + (pos.y * tilesPerRow);
+
+
+        tiles[tilePos] = 0;
+
+        var sprite = this.getChild({tag: tilePos});
+        if (sprite) {
+            this.removeChild({child: sprite});
+        }
+    }
+});
+
+exports.TMXLayer = TMXLayer;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/TMXLayer.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/index.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    path = require('path');
+
+var modules = 'AtlasNode LabelAtlas ProgressBar PreloadScene Node Layer Scene Label Sprite TMXTiledMap BatchNode RenderTexture Menu MenuItem Transition'.split(' ');
+
+/** 
+ * @memberOf cocos
+ * @namespace All cocos2d nodes. i.e. anything that can be added to a Scene
+ */
+var nodes = {};
+
+util.each(modules, function (mod, i) {
+    util.extend(nodes, require('./' + mod));
+});
+
+module.exports = nodes;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/index.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/MenuItem.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    Node = require('./Node').Node,
+    Sprite = require('./Sprite').Sprite,
+    rectMake = require('geometry').rectMake,
+    ccp = require('geometry').ccp;
+
+var MenuItem = Node.extend(/** @lends cocos.nodes.MenuItem# */{
+    isEnabled: true,
+    isSelected: false,
+    callback: null,
+
+    /**
+     * Base class for any buttons or options in a menu
+     *
+     * @memberOf cocos.nodes
+     * @constructs
+     * @extends cocos.nodes.Node
+     *
+     * @opt {Function} callback Function to call when menu item is activated
+     */
+    init: function (opts) {
+        MenuItem.superclass.init.call(this, opts);
+
+        var callback = opts.callback;
+
+        this.set('anchorPoint', ccp(0.5, 0.5));
+        this.set('callback', callback);
+    },
+
+    activate: function () {
+        if (this.isEnabled && this.callback) {
+            this.callback(this);
+        }
+    },
+
+    /**
+     * @getter rect
+     * @type geometry.Rect
+     */
+    get_rect: function () {
+        return rectMake(
+            this.position.x - this.contentSize.width  * this.anchorPoint.x,
+            this.position.y - this.contentSize.height * this.anchorPoint.y,
+            this.contentSize.width,
+            this.contentSize.height
+        );
+    },
+
+    selected: function () {
+        this.isSelected = true;
+    },
+
+    unselected: function () {
+        this.isSelected = false;
+    }
+});
+
+var MenuItemSprite = MenuItem.extend(/** @lends cocos.nodes.MenuItemSprite# */{
+    normalImage: null,
+    selectedImage: null,
+    disabledImage: null,
+
+    /**
+     * A menu item that accepts any cocos.nodes.Node
+     *
+     * @memberOf cocos.nodes
+     * @constructs
+     * @extends cocos.nodes.MenuItem
+     *
+     * @opt {cocos.nodes.Node} normalImage Main Node to draw
+     * @opt {cocos.nodes.Node} selectedImage Node to draw when menu item is selected
+     * @opt {cocos.nodes.Node} disabledImage Node to draw when menu item is disabled
+     */
+    init: function (opts) {
+        MenuItemSprite.superclass.init.call(this, opts);
+
+        var normalImage   = opts.normalImage,
+            selectedImage = opts.selectedImage,
+            disabledImage = opts.disabledImage;
+
+        this.set('normalImage', normalImage);
+        this.set('selectedImage', selectedImage);
+        this.set('disabledImage', disabledImage);
+
+        this.set('contentSize', normalImage.get('contentSize'));
+    },
+
+    set_normalImage: function (image) {
+        if (image != this.normalImage) {
+            image.set('anchorPoint', ccp(0, 0));
+            image.set('visible', true);
+            this.removeChild({child: this.normalImage, cleanup: true});
+            this.addChild(image);
+
+            this.normalImage = image;
+        }
+    },
+
+    set_selectedImage: function (image) {
+        if (image != this.selectedImage) {
+            image.set('anchorPoint', ccp(0, 0));
+            image.set('visible', false);
+            this.removeChild({child: this.selectedImage, cleanup: true});
+            this.addChild(image);
+
+            this.selectedImage = image;
+        }
+    },
+
+    set_disabledImage: function (image) {
+        if (image != this.disabledImage) {
+            image.set('anchorPoint', ccp(0, 0));
+            image.set('visible', false);
+            this.removeChild({child: this.disabledImage, cleanup: true});
+            this.addChild(image);
+
+            this.disabledImage = image;
+        }
+    },
+
+    selected: function () {
+        MenuItemSprite.superclass.selected.call(this);
+
+        if (this.selectedImage) {
+            this.normalImage.set('visible',   false);
+            this.selectedImage.set('visible', true);
+            if (this.disabledImage) this.disabledImage.set('visible', false);
+        } else {
+            this.normalImage.set('visible',   true);
+            if (this.disabledImage) this.disabledImage.set('visible', false);
+        }
+    },
+
+    unselected: function () {
+        MenuItemSprite.superclass.unselected.call(this);
+
+        this.normalImage.set('visible',   true);
+        if (this.selectedImage) this.selectedImage.set('visible', false);
+        if (this.disabledImage) this.disabledImage.set('visible', false);
+    },
+
+    set_isEnabled: function (enabled) {
+        this.isEnabled = enabled;
+
+        if (enabled) {
+            this.normalImage.set('visible',   true);
+            if (this.selectedImage) this.selectedImage.set('visible', false);
+            if (this.disabledImage) this.disabledImage.set('visible', false);
+        } else {
+            if (this.disabledImage) {
+                this.normalImage.set('visible',   false);
+                if (this.selectedImage) this.selectedImage.set('visible', false);
+                this.disabledImage.set('visible', true);
+            } else {
+                this.normalImage.set('visible',   true);
+                if (this.selectedImage) this.selectedImage.set('visible', false);
+            }
+        }
+    }
+
+});
+
+var MenuItemImage = MenuItemSprite.extend(/** @lends cocos.nodes.MenuItemImage# */{
+
+    /**
+     * MenuItem that accepts image files
+     *
+     * @memberOf cocos.nodes
+     * @constructs
+     * @extends cocos.nodes.MenuItemSprite
+     *
+     * @opt {String} normalImage Main image file to draw
+     * @opt {String} selectedImage Image file to draw when menu item is selected
+     * @opt {String} disabledImage Image file to draw when menu item is disabled
+     */
+    init: function (opts) {
+        var normalI   = opts.normalImage,
+            selectedI = opts.selectedImage,
+            disabledI = opts.disabledImage,
+            callback  = opts.callback;
+
+        var normalImage = Sprite.create({file: normalI}),
+            selectedImage = Sprite.create({file: selectedI}),
+            disabledImage = null;
+
+        if (disabledI) {
+            disabledImage = Sprite.create({file: disabledI});
+        }
+
+        return MenuItemImage.superclass.init.call(this, {normalImage: normalImage, selectedImage: selectedImage, disabledImage: disabledImage, callback: callback});
+    }
+});
+
+exports.MenuItem = MenuItem;
+exports.MenuItemImage = MenuItemImage;
+exports.MenuItemSprite = MenuItemSprite;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/MenuItem.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/Layer.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var Node = require('./Node').Node,
+    util = require('util'),
+    evt = require('events'),
+    Director = require('../Director').Director,
+    ccp    = require('geometry').ccp,
+    EventDispatcher = require('../EventDispatcher').EventDispatcher;
+
+var Layer = Node.extend(/** @lends cocos.nodes.Layer# */{
+    isMouseEnabled: false,
+    isKeyboardEnabled: false,
+    mouseDelegatePriority: 0,
+    keyboardDelegatePriority: 0,
+
+    /** 
+     * A fullscreen Node. You need at least 1 layer in your app to add other nodes to.
+     *
+     * @memberOf cocos.nodes
+     * @constructs
+     * @extends cocos.nodes.Node
+     */
+    init: function () {
+        Layer.superclass.init.call(this);
+
+        var s = Director.get('sharedDirector').get('winSize');
+
+        this.set('isRelativeAnchorPoint', false);
+        this.anchorPoint = ccp(0.5, 0.5);
+        this.set('contentSize', s);
+
+        evt.addListener(this, 'ismouseenabled_changed', util.callback(this, function () {
+            if (this.isRunning) {
+                if (this.isMouseEnabled) {
+                    EventDispatcher.get('sharedDispatcher').addMouseDelegate({delegate: this, priority: this.get('mouseDelegatePriority')});
+                } else {
+                    EventDispatcher.get('sharedDispatcher').removeMouseDelegate({delegate: this});
+                }
+            }
+        }));
+
+
+        evt.addListener(this, 'iskeyboardenabled_changed', util.callback(this, function () {
+            if (this.isRunning) {
+                if (this.isKeyboardEnabled) {
+                    EventDispatcher.get('sharedDispatcher').addKeyboardDelegate({delegate: this, priority: this.get('keyboardDelegatePriority')});
+                } else {
+                    EventDispatcher.get('sharedDispatcher').removeKeyboardDelegate({delegate: this});
+                }
+            }
+        }));
+    },
+
+    onEnter: function () {
+        if (this.isMouseEnabled) {
+            EventDispatcher.get('sharedDispatcher').addMouseDelegate({delegate: this, priority: this.get('mouseDelegatePriority')});
+        }
+        if (this.isKeyboardEnabled) {
+            EventDispatcher.get('sharedDispatcher').addKeyboardDelegate({delegate: this, priority: this.get('keyboardDelegatePriority')});
+        }
+				
+        Layer.superclass.onEnter.call(this);
+    },
+
+    onExit: function () {
+        if (this.isMouseEnabled) {
+            EventDispatcher.get('sharedDispatcher').removeMouseDelegate({delegate: this});
+        }
+        if (this.isKeyboardEnabled) {
+            EventDispatcher.get('sharedDispatcher').removeKeyboardDelegate({delegate: this});
+        }
+
+        Layer.superclass.onExit.call(this);
+    }
+});
+
+module.exports.Layer = Layer;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/Layer.js
+
+
+__jah__.resources["/libs/cocos2d/nodes/Scene.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var Node = require('./Node').Node,
+    geo = require('geometry');
+
+var Scene = Node.extend(/** @lends cocos.nodes.Scene */{
+    /**
+     * Everything in your view will be a child of this object. You need at least 1 scene per app.
+     *
+     * @memberOf cocos.nodes
+     * @constructs
+     * @extends cocos.nodes.Node
+     */
+    init: function () {
+        Scene.superclass.init.call(this);
+
+
+        var Director = require('../Director').Director;
+        var s = Director.get('sharedDirector').get('winSize');
+        this.set('isRelativeAnchorPoint', false);
+        this.anchorPoint = new geo.Point(0.5, 0.5);
+        this.set('contentSize', s);
+    }
+
+});
+
+module.exports.Scene = Scene;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/Scene.js
+
+
+__jah__.resources["/libs/cocos2d/EventDispatcher.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray FLIP_Y_AXIS*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    geo = require('geometry');
+
+var EventDispatcher = BObject.extend(/** @lends cocos.EventDispatcher# */{
+    dispatchEvents: true,
+    keyboardDelegates: null,
+    mouseDelegates: null,
+    _keysDown: null,
+    
+    /**
+     * This singleton is responsible for dispatching Mouse and Keyboard events.
+     *
+     * @memberOf cocos
+     * @constructs
+     * @extends BObject
+     * @singleton
+     */
+    init: function () {
+        EventDispatcher.superclass.init.call(this);
+
+        this.keyboardDelegates = [];
+        this.mouseDelegates = [];
+
+        this._keysDown = {};
+    },
+
+    addDelegate: function (opts) {
+        var delegate = opts.delegate,
+            priority = opts.priority,
+            flags    = opts.flags,
+            list     = opts.list;
+
+        var listElement = {
+            delegate: delegate,
+            priority: priority,
+            flags: flags
+        };
+
+        var added = false;
+        for (var i = 0; i < list.length; i++) {
+            var elem = list[i];
+            if (priority < elem.priority) {
+                // Priority is lower, so insert before elem
+                list.splice(i, 0, listElement);
+                added = true;
+                break;
+            }
+        }
+
+        // High priority; append to array
+        if (!added) {
+            list.push(listElement);
+        }
+    },
+
+    removeDelegate: function (opts) {
+        var delegate = opts.delegate,
+            list = opts.list;
+
+        var idx = -1,
+            i;
+        for (i = 0; i < list.length; i++) {
+            var l = list[i];
+            if (l.delegate == delegate) {
+                idx = i;
+                break;
+            }
+        }
+        if (idx == -1) {
+            return;
+        }
+        list.splice(idx, 1);
+    },
+    removeAllDelegates: function (opts) {
+        var list = opts.list;
+
+        list.splice(0, list.length - 1);
+    },
+
+    addMouseDelegate: function (opts) {
+        var delegate = opts.delegate,
+            priority = opts.priority;
+
+        var flags = 0;
+
+        // TODO flags
+
+        this.addDelegate({delegate: delegate, priority: priority, flags: flags, list: this.mouseDelegates});
+    },
+
+    removeMouseDelegate: function (opts) {
+        var delegate = opts.delegate;
+
+        this.removeDelegate({delegate: delegate, list: this.mouseDelegates});
+    },
+
+    removeAllMouseDelegate: function () {
+        this.removeAllDelegates({list: this.mouseDelegates});
+    },
+
+    addKeyboardDelegate: function (opts) {
+        var delegate = opts.delegate,
+            priority = opts.priority;
+
+        var flags = 0;
+
+        // TODO flags
+
+        this.addDelegate({delegate: delegate, priority: priority, flags: flags, list: this.keyboardDelegates});
+    },
+
+    removeKeyboardDelegate: function (opts) {
+        var delegate = opts.delegate;
+
+        this.removeDelegate({delegate: delegate, list: this.keyboardDelegates});
+    },
+
+    removeAllKeyboardDelegate: function () {
+        this.removeAllDelegates({list: this.keyboardDelegates});
+    },
+
+
+
+    // Mouse Events
+
+    mouseDown: function (evt) {
+        if (!this.dispatchEvents) {
+            return;
+        }
+
+        this._previousMouseMovePosition = geo.ccp(evt.clientX, evt.clientY);
+        this._previousMouseDragPosition = geo.ccp(evt.clientX, evt.clientY);
+
+        for (var i = 0; i < this.mouseDelegates.length; i++) {
+            var entry = this.mouseDelegates[i];
+            if (entry.delegate.mouseDown) {
+                var swallows = entry.delegate.mouseDown(evt);
+                if (swallows) {
+                    break;
+                }
+            }
+        }
+    },
+    mouseMoved: function (evt) {
+        if (!this.dispatchEvents) {
+            return;
+        }
+
+        if (this._previousMouseMovePosition) {
+            evt.deltaX = evt.clientX - this._previousMouseMovePosition.x;
+            evt.deltaY = evt.clientY - this._previousMouseMovePosition.y;
+            if (FLIP_Y_AXIS) {
+                evt.deltaY *= -1;
+            }
+        } else {
+            evt.deltaX = 0;
+            evt.deltaY = 0;
+        }
+        this._previousMouseMovePosition = geo.ccp(evt.clientX, evt.clientY);
+
+        for (var i = 0; i < this.mouseDelegates.length; i++) {
+            var entry = this.mouseDelegates[i];
+            if (entry.delegate.mouseMoved) {
+                var swallows = entry.delegate.mouseMoved(evt);
+                if (swallows) {
+                    break;
+                }
+            }
+        }
+    },
+    mouseDragged: function (evt) {
+        if (!this.dispatchEvents) {
+            return;
+        }
+
+        if (this._previousMouseDragPosition) {
+            evt.deltaX = evt.clientX - this._previousMouseDragPosition.x;
+            evt.deltaY = evt.clientY - this._previousMouseDragPosition.y;
+            if (FLIP_Y_AXIS) {
+                evt.deltaY *= -1;
+            }
+        } else {
+            evt.deltaX = 0;
+            evt.deltaY = 0;
+        }
+        this._previousMouseDragPosition = geo.ccp(evt.clientX, evt.clientY);
+
+        for (var i = 0; i < this.mouseDelegates.length; i++) {
+            var entry = this.mouseDelegates[i];
+            if (entry.delegate.mouseDragged) {
+                var swallows = entry.delegate.mouseDragged(evt);
+                if (swallows) {
+                    break;
+                }
+            }
+        }
+    },
+    mouseUp: function (evt) {
+        if (!this.dispatchEvents) {
+            return;
+        }
+
+        for (var i = 0; i < this.mouseDelegates.length; i++) {
+            var entry = this.mouseDelegates[i];
+            if (entry.delegate.mouseUp) {
+                var swallows = entry.delegate.mouseUp(evt);
+                if (swallows) {
+                    break;
+                }
+            }
+        }
+    },
+
+    // Keyboard events
+    keyDown: function (evt) {
+        var kc = evt.keyCode;
+        if (!this.dispatchEvents || this._keysDown[kc]) {
+            return;
+        }
+
+        this._keysDown[kc] = true;
+
+        for (var i = 0; i < this.keyboardDelegates.length; i++) {
+            var entry = this.keyboardDelegates[i];
+            if (entry.delegate.keyDown) {
+                var swallows = entry.delegate.keyDown(evt);
+                if (swallows) {
+                    break;
+                }
+            }
+        }
+    },
+
+    keyUp: function (evt) {
+        if (!this.dispatchEvents) {
+            return;
+        }
+
+        var kc = evt.keyCode;
+        if (this._keysDown[kc]) {
+            delete this._keysDown[kc];
+        }
+
+        for (var i = 0; i < this.keyboardDelegates.length; i++) {
+            var entry = this.keyboardDelegates[i];
+            if (entry.delegate.keyUp) {
+                var swallows = entry.delegate.keyUp(evt);
+                if (swallows) {
+                    break;
+                }
+            }
+        }
+    }
+
+});
+
+/**
+ * Class methods
+ */
+util.extend(EventDispatcher, /** @lends cocos.EventDispatcher */{
+    /**
+     * A shared singleton instance of cocos.EventDispatcher
+     *
+     * @getter sharedDispatcher
+     * @type cocos.EventDispatcher
+     */
+    get_sharedDispatcher: function (key) {
+        if (!this._instance) {
+            this._instance = this.create();
+        }
+
+        return this._instance;
+    }
+});
+exports.EventDispatcher = EventDispatcher;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/EventDispatcher.js
+
+
+__jah__.resources["/libs/cocos2d/SpriteFrame.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    geo = require('geometry'),
+    ccp = geo.ccp;
+
+var SpriteFrame = BObject.extend(/** @lends cocos.SpriteFrame# */{
+    rect: null,
+    rotated: false,
+    offset: null,
+    originalSize: null,
+    texture: null,
+
+    /**
+     * Represents a single frame of animation for a cocos.Sprite
+     *
+     * <p>A SpriteFrame has:<br>
+     * - texture: A Texture2D that will be used by the Sprite<br>
+     * - rectangle: A rectangle of the texture</p>
+     *
+     * <p>You can modify the frame of a Sprite by doing:</p>
+     * 
+     * <code>var frame = SpriteFrame.create({texture: texture, rect: rect});
+     * sprite.set('displayFrame', frame);</code>
+     *
+     * @memberOf cocos
+     * @constructs
+     * @extends BObject
+     *
+     * @opt {cocos.Texture2D} texture The texture to draw this frame using
+     * @opt {geometry.Rect} rect The rectangle inside the texture to draw
+     */
+    init: function (opts) {
+        SpriteFrame.superclass.init(this, opts);
+
+        this.texture      = opts.texture;
+        this.rect         = opts.rect;
+        this.rotated      = !!opts.rotate;
+        this.offset       = opts.offset || ccp(0, 0);
+        this.originalSize = opts.originalSize || util.copy(this.rect.size);
+    },
+
+    /**
+     * @ignore
+     */
+    toString: function () {
+        return "[object SpriteFrame | TextureName=" + this.texture.get('name') + ", Rect = (" + this.rect.origin.x + ", " + this.rect.origin.y + ", " + this.rect.size.width + ", " + this.rect.size.height + ")]";
+    },
+
+    /**
+     * Make a copy of this frame
+     *
+     * @returns {cocos.SpriteFrame} Exact copy of this object
+     */
+    copy: function () {
+        return SpriteFrame.create({rect: this.rect, rotated: this.rotated, offset: this.offset, originalSize: this.originalSize, texture: this.texture});
+    }
+
+});
+
+exports.SpriteFrame = SpriteFrame;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/SpriteFrame.js
+
+
+__jah__.resources["/libs/cocos2d/globals.js"] = {data: function (exports, require, module, __filename, __dirname) {
+module.exports = { FLIP_Y_AXIS: false
+                 , ENABLE_WEB_GL: false
+                 , SHOW_REDRAW_REGIONS: false
+                 }
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/globals.js
+
+
 __jah__.resources["/libs/cocos2d/ActionManager.js"] = {data: function (exports, require, module, __filename, __dirname) {
 /*globals module exports resource require BObject BArray*/
 /*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
@@ -211,2350 +4058,6 @@ exports.ActionManager = ActionManager;
 }, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/ActionManager.js
 
 
-__jah__.resources["/libs/cocos2d/actions/Action.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    console = require('system').console,
-    geo = require('geometry'),
-    ccp = geo.ccp;
-
-/** 
- * @memberOf cocos.actions
- * @class Base class for Actions
- * @extends BObject
- * @constructor
- */
-var Action = BObject.extend(/** @lends cocos.actions.Action# */{
-    /**
-     * The Node the action is being performed on
-     * @type cocos.nodes.Node
-     */
-    target: null,
-    originalTarget: null,
-    
-    /**
-     * Unique tag to identify the action
-     * @type *
-     */
-    tag: null,
-    
-    /**
-     * Called every frame with it's delta time.
-     *
-     * @param {Float} dt The delta time
-     */
-    step: function (dt) {
-        window.console.warn("Action.step() Override me");
-    },
-
-    /**
-     * Called once per frame.
-     *
-     * @param {Float} time How much of the animation has played. 0.0 = just started, 1.0 just finished.
-     */
-    update: function (time) {
-        window.console.warn("Action.update() Override me");
-    },
-
-    /**
-     * Called before the action start. It will also set the target.
-     *
-     * @param {cocos.nodes.Node} target The Node to run the action on
-     */
-    startWithTarget: function (target) {
-        this.target = this.originalTarget = target;
-    },
-
-    /**
-     * Called after the action has finished. It will set the 'target' to nil.
-     * <strong>Important</strong>: You should never call cocos.actions.Action#stop manually.
-     * Instead, use cocos.nodes.Node#stopAction(action)
-     */
-    stop: function () {
-        this.target = null;
-    },
-
-    /**
-     * @getter isDone
-     * @type {Boolean} 
-     */
-    get_isDone: function (key) {
-        return true;
-    },
-
-
-    /**
-     * Returns a copy of this Action but in reverse
-     *
-     * @returns {cocos.actions.Action} A new Action in reverse
-     */
-    reverse: function () {
-    }
-});
-
-var RepeatForever = Action.extend(/** @lends cocos.actions.RepeatForever# */{
-    other: null,
-
-    /**
-     * @memberOf cocos.actions
-     * @class Repeats an action forever. To repeat the an action for a limited
-     * number of times use the cocos.Repeat action.
-     * @extends cocos.actions.Action
-     * @param {cocos.actions.Action} action An action to repeat forever
-     * @constructs
-     */
-    init: function (action) {
-        RepeatForever.superclass.init(this, action);
-
-        this.other = action;
-    },
-
-    startWithTarget: function (target) {
-        RepeatForever.superclass.startWithTarget.call(this, target);
-
-        this.other.startWithTarget(this.target);
-    },
-
-    step: function (dt) {
-        this.other.step(dt);
-        if (this.other.get('isDone')) {
-            var diff = dt - this.other.get('duration') - this.other.get('elapsed');
-            this.other.startWithTarget(this.target);
-
-            this.other.step(diff);
-        }
-    },
-
-    get_isDone: function () {
-        return false;
-    },
-
-    reverse: function () {
-        return RepeatForever.create(this.other.reverse());
-    },
-
-    copy: function () {
-        return RepeatForever.create(this.other.copy());
-    }
-});
-
-var FiniteTimeAction = Action.extend(/** @lends cocos.actions.FiniteTimeAction# */{
-    /**
-     * Number of seconds to run the Action for
-     * @type Float
-     */
-    duration: 2,
-
-    /** 
-     * Repeats an action a number of times. To repeat an action forever use the
-     * cocos.RepeatForever action.
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.Action
-     */
-    init: function () {
-        FiniteTimeAction.superclass.init.call(this);
-    },
-
-    /** @ignore */
-    reverse: function () {
-        console.log('FiniteTimeAction.reverse() Override me');
-    }
-});
-
-var Speed = Action.extend(/** @lends cocos.actions.Speed# */{
-    other: null,
-    
-    /** 
-     * speed of the inner function
-     * @type Float
-     */
-    speed: 1.0,
-    
-    /** 
-     * Changes the speed of an action, making it take longer (speed>1)
-     * or less (speed<1) time.
-     * Useful to simulate 'slow motion' or 'fast forward' effect.
-     * @warning This action can't be Sequenceable because it is not an IntervalAction
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.Action
-     */
-    init: function(opts) {
-        Speed.superclass.init.call(this, opts);
-        
-        this.other = opts.action;
-        this.speed = opts.speed;
-    },
-    
-    startWithTarget: function(target) {
-        Speed.superclass.startWithTarget.call(this, target);
-        this.other.startWithTarget(this.target);
-    },
-    
-    setSpeed: function(speed) {
-        this.speed = speed;
-    },
-    
-    stop: function() {
-        this.other.stop();
-        Speed.superclass.stop.call(this);
-    },
-    
-    step: function(dt) {
-        this.other.step(dt * this.speed);
-    },
-    
-    get_isDone: function() {
-        return this.other.get_isDone();
-    },
-    
-    copy: function() {
-        return Speed.create({action: this.other.copy(), speed: this.speed});
-    },
-    
-    reverse: function() {
-        return Speed.create({action: this.other.reverse(), speed: this.speed});
-    }
-});
-
-var Follow = Action.extend(/** @lends cocos.actions.Follow# */{
-    /**
-     * node to follow
-     */
-    followedNode: null,
-    
-    /**
-     * whether camera should be limited to certain area
-     * @type {Boolean}
-     */
-    boundarySet: false,
-    
-    /**
-     * if screensize is bigger than the boundary - update not needed 
-     * @type {Boolean}
-     */
-    boundaryFullyCovered: false,
-    
-    /**
-     * fast access to the screen dimensions 
-     * @type {geometry.Point}
-     */
-    halfScreenSize: null,
-    fullScreenSize: null,
-    
-    /**
-     * world boundaries
-     * @type {Float}
-     */
-    leftBoundary: 0,
-    rightBoundary: 0,
-    topBoundary: 0,
-    bottomBoundary: 0,
-    
-    /** 
-     * @class Follow an action that "follows" a node.
-     *
-     * Eg:
-     * layer.runAction(cocos.actions.Follow.create({target: hero}))
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.Action
-     *
-     * @opt {cocos.nodes.Node} target
-     * @opt {geometry.Rect} worldBoundary
-     */
-    init: function(opts) {
-        Follow.superclass.init.call(this, opts);
-        
-        this.followedNode = opts.target;
-        
-        var s = require('../Director').Director.get('sharedDirector').get('winSize');
-        this.fullScreenSize = geo.ccp(s.width, s.height);
-        this.halfScreenSize = geo.ccpMult(this.fullScreenSize, geo.ccp(0.5, 0.5));
-        
-        if (opts.worldBoundary !== undefined) {
-            this.boundarySet = true;
-            this.leftBoundary = -((opts.worldBoundary.origin.x + opts.worldBoundary.size.width) - this.fullScreenSize.x);
-            this.rightBoundary = -opts.worldBoundary.origin.x;
-            this.topBoundary = -opts.worldBoundary.origin.y;
-            this.bottomBoundary = -((opts.worldBoundary.origin.y+opts.worldBoundary.size.height) - this.fullScreenSize.y);
-            
-            if (this.rightBoundary < this.leftBoundary) {
-                // screen width is larger than world's boundary width
-                //set both in the middle of the world
-                this.rightBoundary = this.leftBoundary = (this.leftBoundary + this.rightBoundary) / 2;
-            }
-            if (this.topBoundary < this.bottomBoundary)
-            {
-                // screen width is larger than world's boundary width
-                //set both in the middle of the world
-                this.topBoundary = this.bottomBoundary = (this.topBoundary + this.bottomBoundary) / 2;
-            }
-            if ((this.topBoundary == this.bottomBoundary) && (this.leftBoundary == this.rightBoundary)) {
-                this.boundaryFullyCovered = true;
-            }
-        }
-    },
-    
-    step: function(dt) {
-        if (this.boundarySet) {
-            // whole map fits inside a single screen, no need to modify the position - unless map boundaries are increased
-            if (this.boundaryFullyCovered) {
-                return;
-            }
-            var tempPos = geo.ccpSub(this.halfScreenSize, this.followedNode.get('position'));
-            this.target.set('position', ccp(
-                Math.min(Math.max(tempPos.x, this.leftBoundary), this.rightBoundary),
-                Math.min(Math.max(tempPos.y, this.bottomBoundary), this.topBoundary))
-            );
-        } else {
-            this.target.set('position', geo.ccpSub(this.halfScreenSize, this.followedNode.get('position')));
-        }
-    },
-    
-    get_isDone: function() {
-        return !this.followedNode.get('isRunning');
-    }
-});
-
-
-exports.Action = Action;
-exports.RepeatForever = RepeatForever;
-exports.FiniteTimeAction = FiniteTimeAction;
-exports.Speed = Speed;
-exports.Follow = Follow;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/actions/Action.js
-
-
-__jah__.resources["/libs/cocos2d/actions/ActionEase.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    ActionInterval = require('./ActionInterval').ActionInterval,
-    geo = require('geometry'),
-    ccp = geo.ccp;
-
-var ActionEase = ActionInterval.extend(/** @lends cocos.actions.ActionEase# */{
-    other: null,
-    
-    /**
-     * @class Base class for Easing actions
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ActionInterval
-     *
-     * @opt {cocos.actions.ActionInterval} action
-     */
-    init: function(opts) {
-        if (!opts.action) {
-            throw "Ease: action argument must be non-nil";
-        }
-        ActionEase.superclass.init.call(this, {duration: opts.action.duration});
-        
-        this.other = opts.action;
-    },
-    
-    startWithTarget: function(target) {
-        ActionEase.superclass.startWithTarget.call(this, target);
-        this.other.startWithTarget(this.target);
-    },
-    
-    stop: function() {
-        this.other.stop();
-        ActionEase.superclass.stop.call(this);
-    },
-    /*
-    update: function(t) {
-        this.other.update(t);
-    },
-    */
-    copy: function() {
-        return ActionEase.create({action: this.other.copy()});
-    },
-    
-    reverse: function() {
-        return ActionEase.create({action: this.other.reverse()});
-    }
-});
-
-var EaseRate = ActionEase.extend(/** @lends cocos.actions.EaseRate# */{
-    /**
-     * rate value for the actions 
-     * @type {Float} 
-     */
-    rate: 0,
-    
-    /**
-    * @class Base class for Easing actions with rate parameter
-    *
-    * @memberOf cocos.actions
-    * @constructs
-    * @extends cocos.actions.ActionEase
-    *
-    * @opt {cocos.actions.ActionInterval} action
-    * @opt {Float} rate
-    */
-    init: function(opts) {
-        EaseRate.superclass.init.call(this, opts);
-
-        this.rate = opts.rate;
-    },
-    
-    copy: function() {
-        return EaseRate.create({action: this.other.copy(), rate: this.rate});
-    },
-    
-    reverse: function() {
-        return EaseRate.create({action: this.other.reverse(), rate: 1 / this.rate});
-    }
-});
-
-/**
- * @class EaseIn action with a rate
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.EaseRate
- */
-var EaseIn = EaseRate.extend(/** @lends cocos.actions.EaseIn# */{
-    update: function(t) {
-        this.other.update(Math.pow(t, this.rate));
-    },
-    
-    copy: function() {
-        return EaseIn.create({action: this.other.copy(), rate: this.rate});
-    },
-    
-    reverse: function() {
-        return EaseIn.create({action: this.other.reverse(), rate: 1 / this.rate});
-    }
-});
-
-/**
- * @class EaseOut action with a rate
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.EaseRate
- */
-var EaseOut = EaseRate.extend(/** @lends cocos.actions.EaseOut# */{
-    update: function(t) {
-        this.other.update(Math.pow(t, 1/this.rate));
-    },
-    
-    copy: function() {
-        return EaseOut.create({action: this.other.copy(), rate: this.rate});
-    },
-    
-    reverse: function() {
-        return EaseOut.create({action: this.other.reverse(), rate: 1 / this.rate});
-    }
-});
-
-/**
- * @class EaseInOut action with a rate
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.EaseRate
- */
-var EaseInOut = EaseRate.extend(/** @lends cocos.actions.EaseInOut# */{
-    update: function(t) {
-        var sign = 1;
-        var r = Math.floor(this.rate);
-        if (r % 2 == 0) {
-            sign = -1;
-        }
-        t *= 2;
-        if (t < 1) {
-            this.other.update(0.5 * Math.pow(t, this.rate));
-        } else {
-            this.other.update(sign * 0.5 * (Math.pow(t-2, this.rate) + sign * 2));
-        }
-    },
-    
-    copy: function() {
-        return EaseInOut.create({action: this.other.copy(), rate: this.rate});
-    },
-    
-    reverse: function() {
-        return EaseInOut.create({action: this.other.reverse(), rate: this.rate});
-    }
-});
-
-/**
- * @class EaseExponentialIn action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionEase
- */
-var EaseExponentialIn = ActionEase.extend(/** @lends cocos.actions.EaseExponentialIn# */{
-    update: function(t) {
-        this.other.update((t == 0) ? 0 : (Math.pow(2, 10 * (t/1 - 1)) - 1 * 0.001));
-    },
-    
-    copy: function() {
-        return EaseExponentialIn.create({action: this.other.copy()});
-    },
-    
-    reverse: function() {
-        return exports.EaseExponentialOut.create({action: this.other.reverse()});
-    }
-});
-
-/**
- * @class EaseExponentialOut action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionEase
- */
-var EaseExponentialOut = ActionEase.extend(/** @lends cocos.actions.EaseExponentialOut# */{
-    update: function(t) {
-        this.other.update((t == 1) ? 1 : (-Math.pow(2, -10 * t/1) + 1));
-    },
-    
-    copy: function() {
-        return EaseExponentialOut.create({action: this.other.copy()});
-    },
-    
-    reverse: function() {
-        return exports.EaseExponentialIn.create({action: this.other.reverse()});
-    }
-});
-
-/**
- * @class EaseExponentialInOut action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionEase
- */
-var EaseExponentialInOut = ActionEase.extend(/** @lends cocos.actions.EaseExponentialInOut# */{
-    update: function(t) {
-        t /= 0.5;
-        if (t < 1) {
-            t = 0.5 * Math.pow(2, 10 * (t - 1));
-        } else {
-            t = 0.5 * (-Math.pow(2, -10 * (t - 1)) + 2);
-        }
-        this.other.update(t);
-    },
-    
-    copy: function() {
-        return EaseExponentialInOut.create({action: this.other.copy()});
-    },
-    
-    reverse: function() {
-        return EaseExponentialInOut.create({action: this.other.reverse()});
-    }
-});
-
-/**
- * @class EaseSineIn action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionEase
- */
-var EaseSineIn = ActionEase.extend(/** @lends cocos.actions.EaseSineIn# */{
-    update: function(t) {
-        this.other.update(-1 * Math.cos(t * Math.PI_2) + 1);
-    },
-    
-    copy: function() {
-        return EaseSineIn.create({action: this.other.copy()});
-    },
-    
-    reverse: function() {
-        return exports.EaseSineOut.create({action: this.other.reverse()});
-    }
-});
-
-/**
- * @class EaseSineOut action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionEase
- */
-var EaseSineOut = ActionEase.extend(/** @lends cocos.actions.EaseSineOut# */{
-    update: function(t) {
-        this.other.update(Math.sin(t * Math.PI_2));
-    },
-    
-    copy: function() {
-        return EaseSineOut.create({action: this.other.copy()});
-    },
-    
-    reverse: function() {
-        return exports.EaseSineIn.create({action: this.other.reverse()});
-    }
-});
-
-/**
- * @class EaseSineInOut action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionEase
- */
-var EaseSineInOut = ActionEase.extend(/** @lends cocos.actions.EaseSineInOut# */{
-    update: function(t) {
-        this.other.update(-0.5 * (Math.cos(t * Math.PI) - 1));
-    },
-    
-    copy: function() {
-        return EaseSineInOut.create({action: this.other.copy()});
-    },
-    
-    reverse: function() {
-        return EaseSineInOut.create({action: this.other.reverse()});
-    }
-});
-
-var EaseElastic = ActionEase.extend(/** @lends cocos.actions.EaseElastic# */{
-    /**
-     * period of the wave in radians. default is 0.3
-     * @type {Float}
-     */
-    period: 0.3,
-
-    /**
-     * @class Ease Elastic abstract class
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ActionEase
-     *
-     * @opt {cocos.actions.ActionInterval} action
-     * @opt {Float} period
-     */
-    init: function(opts) {
-        EaseElastic.superclass.init.call(this, {action: opts.action});
-
-        if (opts.period !== undefined) {
-            this.period = opts.period;
-        }
-    },
-
-    copy: function() {
-        return EaseElastic.create({action: this.other.copy(), period: this.period});
-    },
-
-    reverse: function() {
-        window.console.warn("EaseElastic reverse(): Override me");
-        return null;
-    }
-});
-
-/** 
- * @class Ease Elastic In action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.EaseElastic
- */
-var EaseElasticIn = EaseElastic.extend(/** @lends cocos.actions.EaseElasticIn# */{
-    update: function(t) {
-        var newT = 0;
-        if (t == 0 || t == 1) {
-            newT = t;
-        } else {
-            var s = this.period / 4;
-            t -= 1;
-            newT = -Math.pow(2, 10 * t) * Math.sin((t - s) * Math.PI*2 / this.period);
-        }
-        this.other.update(newT);
-    },
-    
-    // Wish we could use base class's copy
-    copy: function() {
-        return EaseElasticIn.create({action: this.other.copy(), period: this.period});
-    },
-    
-    reverse: function() {
-        return exports.EaseElasticOut.create({action: this.other.reverse(), period: this.period});
-    }
-});
-
-/** 
- * @class Ease Elastic Out action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.EaseElastic
- */
-var EaseElasticOut = EaseElastic.extend(/** @lends cocos.actions.EaseElasticOut# */{
-    update: function(t) {
-        var newT = 0;
-        if (t == 0 || t == 1) {
-            newT = t;
-        } else {
-            var s = this.period / 4;
-            newT = Math.pow(2, -10 * t) * Math.sin((t - s) * Math.PI*2 / this.period) + 1;
-        }
-        this.other.update(newT);
-    },
-    
-    copy: function() {
-        return EaseElasticOut.create({action: this.other.copy(), period: this.period});
-    },
-    
-    reverse: function() {
-        return exports.EaseElasticIn.create({action: this.other.reverse(), period: this.period});
-    }
-});
-
-/** 
- * @class Ease Elastic In Out action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.EaseElastic
- */
-var EaseElasticInOut = EaseElastic.extend(/** @lends cocos.actions.EaseElasticInOut# */{
-    update: function(t) {
-        var newT = 0;
-        if (t == 0 || t == 1) {
-            newT = t;
-        } else {
-            t *= 2;
-            if (this.period == 0) {
-                this.period = 0.3 * 1.5;
-            }
-            var s = this.period / 4;
-            
-            t -= 1;
-            if (t < 0) {
-                newT = -0.5 * Math.pow(2, 10 * t) * Math.sin((t - s) * Math.PI*2 / this.period);
-            } else {
-                newT = Math.pow(2, -10 * t) * Math.sin((t - s) * Math.PI*2 / this.period) * 0.5 + 1;
-            }
-        }
-        this.other.update(newT);
-    },
-    
-    copy: function() {
-        return EaseElasticInOut.create({action: this.other.copy(), period: this.period});
-    },
-    
-    reverse: function() {
-        return EaseElasticInOut.create({action: this.other.reverse(), period: this.period});
-    }
-});
-
-/** 
- * @class Ease Bounce abstract class
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionEase
- */
-var EaseBounce = ActionEase.extend(/** @lends cocos.actions.EaseBounce# */{
-    bounceTime: function(t) {
-        // Direct cut & paste from CCActionEase.m, obviously.
-        // Glad someone else figured out all this math...
-        if (t < 1 / 2.75) {
-            return 7.5625 * t * t;
-        }
-        else if (t < 2 / 2.75) {
-            t -= 1.5 / 2.75;
-            return 7.5625 * t * t + 0.75;
-        }
-        else if (t < 2.5 / 2.75) {
-            t -= 2.25 / 2.75;
-            return 7.5625 * t * t + 0.9375;
-        }
-
-        t -= 2.625 / 2.75;
-        return 7.5625 * t * t + 0.984375;
-    }
-});
-
-/** 
- * @class Ease Bounce In action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.EaseBounce
- */
-var EaseBounceIn = EaseBounce.extend(/** @lends cocos.actions.EaseBounceIn# */{
-    update: function(t) {
-        var newT = 1 - this.bounceTime(1-t);
-        this.other.update(newT);
-    },
-    
-    copy: function() {
-        return EaseBounceIn.create({action: this.other.copy()});
-    },
-    
-    reverse: function() {
-        return exports.EaseBounceOut.create({action: this.other.reverse()});
-    }
-});
-
-/** 
- * @class Ease Bounce Out action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.EaseBounce
- */
-var EaseBounceOut = EaseBounce.extend(/** @lends cocos.actions.EaseBounceOut# */{
-    update: function(t) {
-        var newT = this.bounceTime(t);
-        this.other.update(newT);
-    },
-    
-    copy: function() {
-        return EaseBounceOut.create({action: this.other.copy()});
-    },
-    
-    reverse: function() {
-        return exports.EaseBounceIn.create({action: this.other.reverse()});
-    }
-});
-
-/** 
- * @class Ease Bounce In Out action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.EaseBounce
- */
-var EaseBounceInOut = EaseBounce.extend(/** @lends cocos.actions.EaseBounceInOut# */{
-    update: function(t) {
-        var newT = 0;
-        if (t < 0.5) {
-            t *= 2;
-            newT = (1 - this.bounceTime(1 - t)) * 0.5;
-        } else {
-            newT = this.bounceTime(t * 2 - 1) * 0.5 + 0.5;
-        }
-        this.other.update(newT);
-    },
-    
-    copy: function() {
-        return EaseBounceInOut.create({action: this.other.copy()});
-    },
-    
-    reverse: function() {
-        return EaseBounceInOut.create({action: this.other.reverse()});
-    }
-});
-
-/** 
- * @class Ease Back In action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionEase
- */
-var EaseBackIn = ActionEase.extend(/** @lends cocos.actions.EaseBackIn# */{
-    update: function(t) {
-        var overshoot = 1.70158;
-        this.other.update(t * t * ((overshoot + 1) * t - overshoot));
-    },
-    
-    copy: function() {
-        return EaseBackIn.create({action: this.other.copy()});
-    },
-    
-    reverse: function() {
-        return exports.EaseBackOut.create({action: this.other.reverse()});
-    }
-});
-
-/** 
- * @class Ease Back Out action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionEase
- */
-var EaseBackOut = ActionEase.extend(/** @lends cocos.actions.EaseBackOut# */{
-    update: function(t) {
-        var overshoot = 1.70158;
-        t -= 1;
-        this.other.update(t * t * ((overshoot + 1) * t + overshoot) + 1);
-    },
-    
-    copy: function() {
-        return EaseBackOut.create({action: this.other.copy()});
-    },
-    
-    reverse: function() {
-        return exports.EaseBackIn.create({action: this.other.reverse()});
-    }
-});
-
-/** 
- * @class Ease Back In Out action
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionEase
- */
-var EaseBackInOut = ActionEase.extend(/** @lends cocos.actions.EaseBackInOut# */{
-    update: function(t) {
-        // Where do these constants come from?
-        var overshoot = 1.70158 * 1.525;
-        t *= 2;
-        if (t < 1) {
-            this.other.update((t * t * ((overshoot + 1) * t - overshoot)) / 2);
-        } else {
-            t -= 2;
-            this.other.update((t * t * ((overshoot + 1) * t + overshoot)) / 2 + 1);
-        }
-    },
-    
-    copy: function() {
-        return EaseBackInOut.create({action: this.other.copy()});
-    },
-    
-    reverse: function() {
-        return EaseBackInOut.create({action: this.other.reverse()});
-    }
-});
-
-exports.ActionEase = ActionEase;
-exports.EaseRate = EaseRate;
-exports.EaseIn = EaseIn;
-exports.EaseOut = EaseOut;
-exports.EaseInOut = EaseInOut;
-exports.EaseExponentialIn = EaseExponentialIn;
-exports.EaseExponentialOut = EaseExponentialOut;
-exports.EaseExponentialInOut = EaseExponentialInOut;
-exports.EaseSineIn = EaseSineIn;
-exports.EaseSineOut = EaseSineOut;
-exports.EaseSineInOut = EaseSineInOut;
-exports.EaseElastic = EaseElastic;
-exports.EaseElasticIn = EaseElasticIn;
-exports.EaseElasticOut = EaseElasticOut;
-exports.EaseElasticInOut = EaseElasticInOut;
-exports.EaseBounce = EaseBounce;
-exports.EaseBounceIn = EaseBounceIn;
-exports.EaseBounceOut = EaseBounceOut;
-exports.EaseBounceInOut = EaseBounceInOut;
-exports.EaseBackIn = EaseBackIn;
-exports.EaseBackOut = EaseBackOut;
-exports.EaseBackInOut = EaseBackInOut;
-
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/actions/ActionEase.js
-
-
-__jah__.resources["/libs/cocos2d/actions/ActionInstant.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    act = require('./Action'),
-    ccp = require('geometry').ccp;
-
-var ActionInstant = act.FiniteTimeAction.extend(/** @lends cocos.actions.ActionInstant */{
-    /**
-     * @class Base class for actions that triggers instantly. They have no duration.
-     *
-     * @memberOf cocos.actions
-     * @extends cocos.actions.FiniteTimeAction
-     * @constructs
-     */
-    init: function (opts) {
-        ActionInstant.superclass.init.call(this, opts);
-
-        this.duration = 0;
-    },
-    
-    get_isDone: function () {
-        return true;
-    },
-    
-    step: function (dt) {
-        this.update(1);
-    },
-    
-    update: function (t) {
-        // ignore
-    },
-    
-    copy: function() {
-        return this;
-    },
-    
-    reverse: function () {
-        return this.copy();
-    }
-});
-
-/** 
- * @class Show a node
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionInstant
- */
-var Show = ActionInstant.extend(/** @lends cocos.actions.Show# */{
-    startWithTarget: function(target) {
-        Show.superclass.startWithTarget.call(this, target);
-        this.target.set('visible', true);
-    },
-
-    copy: function() {
-        return Show.create();
-    },
-    
-    reverse: function() {
-        return exports.Hide.create();
-    }
-});
-
-/** 
- * @class Hide a node
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionInstant
- */
-var Hide = ActionInstant.extend(/** @lends cocos.actions.Hide# */{
-    startWithTarget: function(target) {
-        Hide.superclass.startWithTarget.call(this, target);
-        this.target.set('visible', false);
-    },
-
-    copy: function() {
-        return Hide.create();
-    },
-    
-    reverse: function() {
-        return exports.Show.create();
-    }
-});
-
-/** 
- * @class Toggles the visibility of a node
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionInstant
- */
-var ToggleVisibility = ActionInstant.extend(/** @lends cocos.actions.ToggleVisibility# */{
-    startWithTarget: function(target) {
-        ToggleVisibility.superclass.startWithTarget.call(this, target);
-        var vis = this.target.get('visible');
-        this.target.set('visible', !vis);
-    },
-    
-    copy: function() {
-        return ToggleVisibility.create();
-    }
-});
-
-var FlipX = ActionInstant.extend(/** @lends cocos.actions.FlipX# */{
-    flipX: false,
-
-    /**
-     * @class Flips a sprite horizontally
-     *
-     * @memberOf cocos.actions
-     * @extends cocos.actions.ActionInstant
-     * @constructs
-     *
-     * @opt {Boolean} flipX Should the sprite be flipped
-     */
-    init: function (opts) {
-        FlipX.superclass.init.call(this, opts);
-
-        this.flipX = opts.flipX;
-    },
-    
-    startWithTarget: function (target) {
-        FlipX.superclass.startWithTarget.call(this, target);
-
-        target.set('flipX', this.flipX);
-    },
-    
-    reverse: function () {
-        return FlipX.create({flipX: !this.flipX});
-    },
-    
-    copy: function () {
-        return FlipX.create({flipX: this.flipX});
-    }
-});
-
-var FlipY = ActionInstant.extend(/** @lends cocos.actions.FlipY# */{
-    flipY: false,
-
-    /**
-     * @class Flips a sprite vertically
-     *
-     * @memberOf cocos.actions
-     * @extends cocos.actions.ActionInstant
-     * @constructs
-     *
-     * @opt {Boolean} flipY Should the sprite be flipped
-     */
-    init: function (opts) {
-        FlipY.superclass.init.call(this, opts);
-
-        this.flipY = opts.flipY;
-    },
-    
-    startWithTarget: function (target) {
-        FlipY.superclass.startWithTarget.call(this, target);
-
-        target.set('flipY', this.flipY);
-    },
-    
-    reverse: function () {
-        return FlipY.create({flipY: !this.flipY});
-    },
-    
-    copy: function () {
-        return FlipY.create({flipY: this.flipY});
-    }
-});
-
-var Place = ActionInstant.extend(/** @lends cocos.actions.Place# */{
-    position: null,
-    
-    /**
-     * @class Places the node in a certain position
-     *
-     * @memberOf cocos.actions
-     * @extends cocos.actions.ActionInstant
-     * @constructs
-     *
-     * @opt {geometry.Point} position
-     */
-    init: function(opts) {
-        Place.superclass.init.call(this, opts);
-        this.set('position', util.copy(opts.position));
-    },
-    
-    startWithTarget: function(target) {
-        Place.superclass.startWithTarget.call(this, target);
-        this.target.set('position', this.position);
-    },
-    
-    copy: function() {
-        return Place.create({position: this.position});
-    }
-});
-
-var CallFunc = ActionInstant.extend(/** @lends cocos.actions.CallFunc# */{
-    callback: null,
-    target: null,
-    method: null,
-    
-    /**
-     * @class Calls a 'callback'
-     *
-     * @memberOf cocos.actions
-     * @extends cocos.actions.ActionInstant
-     * @constructs
-     *
-     * @opt {BObject} target
-     * @opt {String|Function} method
-     */
-    init: function(opts) {
-        CallFunc.superclass.init.call(this, opts);
-        
-        // Save target & method so that copy() can recreate callback
-        this.target = opts.target;
-        this.method = opts.method;
-        this.callback = util.callback(this.target, this.method);
-    },
-    
-    startWithTarget: function(target) {
-        CallFunc.superclass.startWithTarget.call(this, target);
-        this.execute(target);
-    },
-    
-    execute: function(target) {
-        // Pass target to callback
-        this.callback.call(this, target);
-    },
-    
-    copy: function() {
-        return CallFunc.create({target: this.target, method: this.method});
-    }
-});
-
-exports.ActionInstant = ActionInstant;
-exports.Show = Show;
-exports.Hide = Hide;
-exports.ToggleVisibility = ToggleVisibility;
-exports.FlipX = FlipX;
-exports.FlipY = FlipY;
-exports.Place = Place;
-exports.CallFunc = CallFunc;
-
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/actions/ActionInstant.js
-
-
-__jah__.resources["/libs/cocos2d/actions/ActionInterval.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    act = require('./Action'),
-    geo = require('geometry'),
-    ccp = geo.ccp;
-
-
-var ActionInterval = act.FiniteTimeAction.extend(/** @lends cocos.actions.ActionInterval# */{
-    /**
-     * Number of seconds that have elapsed
-     * @type Float
-     */
-    elapsed: 0.0,
-
-    _firstTick: true,
-
-    /**
-     * Base class actions that do have a finite time duration.
-     *
-     * Possible actions:
-     *
-     * - An action with a duration of 0 seconds
-     * - An action with a duration of 35.5 seconds Infinite time actions are valid
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.FiniteTimeAction
-     *
-     * @opt {Float} duration Number of seconds to run action for
-     */
-    init: function (opts) {
-        ActionInterval.superclass.init.call(this, opts);
-
-        var dur = opts.duration || 0;
-        if (dur === 0) {
-            dur = 0.0000001;
-        }
-
-        this.set('duration', dur);
-        this.set('elapsed', 0);
-        this._firstTick = true;
-    },
-
-    get_isDone: function () {
-        return (this.elapsed >= this.duration);
-    },
-
-    step: function (dt) {
-        if (this._firstTick) {
-            this._firstTick = false;
-            this.elapsed = 0;
-        } else {
-            this.elapsed += dt;
-        }
-
-        this.update(Math.min(1, this.elapsed / this.duration));
-    },
-
-    startWithTarget: function (target) {
-        ActionInterval.superclass.startWithTarget.call(this, target);
-
-        this.elapsed = 0.0;
-        this._firstTick = true;
-    },
-
-    copy: function() {
-        throw "copy() not implemented";
-    },
-    
-    reverse: function () {
-        throw "Reverse Action not implemented";
-    }
-});
-
-var DelayTime = ActionInterval.extend(/** @lends cocos.actions.DelayTime# */{
-    /**
-     * @class DelayTime Delays the action a certain amount of seconds
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ActionInterval
-     */
-    update: function (t) {
-        if (t === 1.0) {
-            this.stop();
-        }
-    },
-
-    copy: function () {
-        return DelayTime.create({duration: this.get('duration')});
-    },
-
-    reverse: function () {
-        return DelayTime.create({duration: this.get('duration')});
-    }
-});
-
-
-var ScaleTo = ActionInterval.extend(/** @lends cocos.actions.ScaleTo# */{
-    /**
-     * Current X Scale
-     * @type Float
-     */
-    scaleX: 1,
-
-    /**
-     * Current Y Scale
-     * @type Float
-     */
-    scaleY: 1,
-
-    /**
-     * Initial X Scale
-     * @type Float
-     */
-    startScaleX: 1,
-
-    /**
-     * Initial Y Scale
-     * @type Float
-     */
-    startScaleY: 1,
-
-    /**
-     * Final X Scale
-     * @type Float
-     */
-    endScaleX: 1,
-
-    /**
-     * Final Y Scale
-     * @type Float
-     */
-    endScaleY: 1,
-
-    /**
-     * Delta X Scale
-     * @type Float
-     * @private
-     */
-    deltaX: 0.0,
-
-    /**
-     * Delta Y Scale
-     * @type Float
-     * @private
-     */
-    deltaY: 0.0,
-
-    /**
-     * @class ScaleTo Scales a cocos.Node object to a zoom factor by modifying it's scale attribute.
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ActionInterval
-     *
-     * @opt {Float} duration Number of seconds to run action for
-     * @opt {Float} [scale] Size to scale Node to
-     * @opt {Float} [scaleX] Size to scale width of Node to
-     * @opt {Float} [scaleY] Size to scale height of Node to
-     */
-    init: function (opts) {
-        ScaleTo.superclass.init.call(this, opts);
-
-        if (opts.scale !== undefined) {
-            this.endScaleX = this.endScaleY = opts.scale;
-        } else {
-            this.endScaleX = opts.scaleX;
-            this.endScaleY = opts.scaleY;
-        }
-
-
-    },
-
-    startWithTarget: function (target) {
-        ScaleTo.superclass.startWithTarget.call(this, target);
-
-        this.startScaleX = this.target.get('scaleX');
-        this.startScaleY = this.target.get('scaleY');
-        this.deltaX = this.endScaleX - this.startScaleX;
-        this.deltaY = this.endScaleY - this.startScaleY;
-    },
-
-    update: function (t) {
-        if (!this.target) {
-            return;
-        }
-
-        this.target.set('scaleX', this.startScaleX + this.deltaX * t);
-        this.target.set('scaleY', this.startScaleY + this.deltaY * t);
-    },
-
-    copy: function () {
-        return ScaleTo.create({duration: this.get('duration'),
-                                 scaleX: this.get('endScaleX'),
-                                 scaleY: this.get('endScaleY')});
-    }
-});
-
-var ScaleBy = ScaleTo.extend(/** @lends cocos.actions.ScaleBy# */{
-    /**
-     * @class ScaleBy Scales a cocos.Node object to a zoom factor by modifying it's scale attribute.
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ScaleTo
-     *
-     * @opt {Float} duration Number of seconds to run action for
-     * @opt {Float} [scale] Size to scale Node by
-     * @opt {Float} [scaleX] Size to scale width of Node by
-     * @opt {Float} [scaleY] Size to scale height of Node by
-     */
-    init: function (opts) {
-        ScaleBy.superclass.init.call(this, opts);
-    },
-
-    startWithTarget: function (target) {
-        ScaleBy.superclass.startWithTarget.call(this, target);
-
-        this.deltaX = this.startScaleX * this.endScaleX - this.startScaleX;
-        this.deltaY = this.startScaleY * this.endScaleY - this.startScaleY;
-    },
-
-    reverse: function () {
-        return ScaleBy.create({duration: this.get('duration'), scaleX: 1 / this.endScaleX, scaleY: 1 / this.endScaleY});
-    }
-});
-
-
-var RotateTo = ActionInterval.extend(/** @lends cocos.actions.RotateTo# */{
-    /**
-     * Final angle
-     * @type Float
-     */
-    dstAngle: 0,
-
-    /**
-     * Initial angle
-     * @type Float
-     */
-    startAngle: 0,
-
-    /**
-     * Angle delta
-     * @type Float
-     */
-    diffAngle: 0,
-
-    /**
-     * @class RotateTo Rotates a cocos.Node object to a certain angle by modifying its rotation
-     * attribute. The direction will be decided by the shortest angle.
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ActionInterval
-     *
-     * @opt {Float} duration Number of seconds to run action for
-     * @opt {Float} angle Angle in degrees to rotate to
-     */
-    init: function (opts) {
-        RotateTo.superclass.init.call(this, opts);
-
-        this.dstAngle = opts.angle;
-    },
-
-    startWithTarget: function (target) {
-        RotateTo.superclass.startWithTarget.call(this, target);
-
-        this.startAngle = target.get('rotation');
-
-        if (this.startAngle > 0) {
-            this.startAngle = (this.startAngle % 360);
-        } else {
-            this.startAngle = (this.startAngle % -360);
-        }
-
-        this.diffAngle = this.dstAngle - this.startAngle;
-        if (this.diffAngle > 180) {
-            this.diffAngle -= 360;
-        } else if (this.diffAngle < -180) {
-            this.diffAngle += 360;
-        }
-    },
-
-    update: function (t) {
-        this.target.set('rotation', this.startAngle + this.diffAngle * t);
-    },
-
-    copy: function () {
-        return RotateTo.create({duration: this.get('duration'), angle: this.get('dstAngle')});
-    }
-});
-
-var RotateBy = RotateTo.extend(/** @lends cocos.actions.RotateBy# */{
-    /**
-     * Number of degrees to rotate by
-     * @type Float
-     */
-    angle: 0,
-
-    /**
-     * @class RotateBy Rotates a cocos.Node object to a certain angle by modifying its rotation
-     * attribute. The direction will be decided by the shortest angle.
-     *
-     * @memberOf cocos.action
-     * @constructs
-     * @extends cocos.actions.RotateTo
-     *
-     * @opt {Float} duration Number of seconds to run action for
-     * @opt {Float} angle Angle in degrees to rotate by
-     */
-    init: function (opts) {
-        RotateBy.superclass.init.call(this, opts);
-
-        this.angle = opts.angle;
-    },
-
-    startWithTarget: function (target) {
-        RotateBy.superclass.startWithTarget.call(this, target);
-
-        this.startAngle = this.target.get('rotation');
-    },
-
-    update: function (t) {
-        this.target.set('rotation', this.startAngle + this.angle * t);
-    },
-
-    copy: function () {
-        return RotateBy.create({duration: this.get('duration'), angle: this.angle});
-    },
-    
-    reverse: function () {
-        return RotateBy.create({duration: this.get('duration'), angle: -this.angle});
-    }
-});
-
-var MoveTo = ActionInterval.extend(/** @lends cocos.actions.MoveTo# */{
-    delta: null,
-    startPosition: null,
-    endPosition: null,
-
-    /**
-     * @class MoveTo Animates moving a cocos.nodes.Node object to a another point.
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ActionInterval
-     *
-     * @opt {Float} duration Number of seconds to run action for
-     * @opt {geometry.Point} position Destination position
-     */
-    init: function (opts) {
-        MoveTo.superclass.init.call(this, opts);
-
-        this.set('endPosition', util.copy(opts.position));
-    },
-
-    startWithTarget: function (target) {
-        MoveTo.superclass.startWithTarget.call(this, target);
-
-        this.set('startPosition', util.copy(target.get('position')));
-        this.set('delta', geo.ccpSub(this.get('endPosition'), this.get('startPosition')));
-    },
-
-    update: function (t) {
-        var startPosition = this.get('startPosition'),
-            delta = this.get('delta');
-        this.target.set('position', ccp(startPosition.x + delta.x * t, startPosition.y + delta.y * t));
-    },
-    
-    copy: function() {
-        return MoveTo.create({duration: this.get('duration'), position: this.get('endPosition')});
-    }
-});
-
-var MoveBy = MoveTo.extend(/** @lends cocos.actions.MoveBy# */{
-    /**
-     * @class MoveBy Animates moving a cocos.node.Node object by a given number of pixels
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.MoveTo
-     *
-     * @opt {Float} duration Number of seconds to run action for
-     * @opt {geometry.Point} position Number of pixels to move by
-     */
-    init: function (opts) {
-        MoveBy.superclass.init.call(this, opts);
-
-        this.set('delta', util.copy(opts.position));
-    },
-
-    startWithTarget: function (target) {
-        var dTmp = this.get('delta');
-        MoveBy.superclass.startWithTarget.call(this, target);
-        this.set('delta', dTmp);
-    },
-    
-    copy: function() {
-         return MoveBy.create({duration: this.get('duration'), position: this.get('delta')});
-    },
-    
-    reverse: function() {
-        var delta = this.get('delta');
-        return MoveBy.create({duration: this.get('duration'), position: geo.ccp(-delta.x, -delta.y)});
-    }
-});
-
-var JumpBy = ActionInterval.extend(/** @lends cocos.actions.JumpBy# */{
-    /**
-     * Number of pixels to jump by
-     * @type geometry.Point
-     */
-    delta: null,
-    
-    /**
-     * Height of jump
-     * @type Float
-     */
-    height: 0,
-    
-    /**
-     * Number of times to jump
-     * @type Integer
-     */
-    jumps: 0,
-    
-    /**
-     * Starting point
-     * @type geometry.Point
-     */
-    startPosition: null,
-    
-    /**
-     * @class JumpBy Moves a CCNode object simulating a parabolic jump movement by modifying it's position attribute.
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ActionInterval
-     *
-     * @opt {Float} duration Number of seconds to run action for
-     * @opt {geometry.Point} startPosition Point at which jump starts
-     * @opt {geometry.Point} delta Number of pixels to jump by
-     * @opt {Float} height Height of jump
-     * @opt {Int} jumps Number of times to repeat
-     */
-    init: function(opts) {
-        JumpBy.superclass.init.call(this, opts);
-        
-        this.delta  = util.copy(opts.delta);
-        this.height = opts.height;
-        this.jumps  = opts.jumps;
-    },
-    
-    copy: function() {
-        return JumpBy.create({duration: this.duration, 
-                                 delta: this.delta,
-                                height: this.height,
-                                 jumps: this.jumps});
-    },
-    
-    startWithTarget: function(target) {
-        JumpBy.superclass.startWithTarget.call(this, target);
-        this.set('startPosition', target.get('position'));
-    },
-    
-    update: function(t) {
-        // parabolic jump
-        var frac = (t * this.jumps) % 1.0;
-        var y = this.height * 4 * frac * (1 - frac);
-        y += this.delta.y * t;
-        var x = this.delta.x * t;
-        this.target.set('position', geo.ccp(this.startPosition.x + x, this.startPosition.y + y));
-    },
-    
-    reverse: function() {
-        return JumpBy.create({duration: this.duration,
-                                 delta: geo.ccp(-this.delta.x, -this.delta.y),
-                                height: this.height,
-                                 jumps: this.jumps});
-    }
-});
-
-/**
- * @class Moves a Node to a parabolic position simulating a jump movement by modifying its position attribute.
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.JumpBy
- */
-var JumpTo = JumpBy.extend(/** @lends cocos.actions.JumpTo# */{
-    startWithTarget: function(target) {
-        JumpTo.superclass.startWithTarget.call(this, target);
-        this.delta = geo.ccp(this.delta.x - this.startPosition.x, this.delta.y - this.startPosition.y);
-    }
-});
-
-var BezierBy = ActionInterval.extend(/** @lends cocos.actions.BezierBy# */{
-    /**
-     * @type {geometry.BezierConfig}
-     */
-    config: null,
-    
-    startPosition: null,
-    
-    /**
-     * @class An action that moves the target with a cubic Bezier curve by a certain distance.
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ActionInterval
-     *
-     * @opt {geometry.BezierConfig} bezier Bezier control points object
-     * @opt {Float} duration
-     */
-    init: function(opts) {
-        BezierBy.superclass.init.call(this, opts);
-        
-        this.config = util.copy(opts.bezier);
-    },
-    
-    startWithTarget: function(target) {
-        BezierBy.superclass.startWithTarget.call(this, target);
-        this.set('startPosition', this.target.get('position'));
-    },
-    
-    update: function(t) {
-        var c = this.get('config');
-        var xa = 0,
-            xb = c.controlPoint1.x,
-            xc = c.controlPoint2.x,
-            xd = c.endPosition.x,
-            ya = 0,
-            yb = c.controlPoint1.y,
-            yc = c.controlPoint2.y,
-            yd = c.endPosition.y;
-        
-        var x = BezierBy.bezierat(xa, xb, xc, xd, t);
-        var y = BezierBy.bezierat(ya, yb, yc, yd, t);
-        
-        this.target.set('position', geo.ccpAdd(this.get('startPosition'), geo.ccp(x, y)));
-    },
-    
-    copy: function() {
-        return BezierBy.create({bezier: this.get('config'), duration: this.get('duration')});
-    },
-    
-    reverse: function() {
-        var c = this.get('config'),
-            bc = new geo.BezierConfig();
-            
-        bc.endPosition = geo.ccpNeg(c.endPosition);
-        bc.controlPoint1 = geo.ccpAdd(c.controlPoint2, geo.ccpNeg(c.endPosition));
-        bc.controlPoint2 = geo.ccpAdd(c.controlPoint1, geo.ccpNeg(c.endPosition));
-        
-        return BezierBy.create({bezier: bc, duration: this.get('duration')});
-    }
-});
-
-util.extend(BezierBy, /** @lends cocos.actions.BezierBy */{
-    /**
-     * Bezier cubic formula
-     * ((1 - t) + t)3 = 1 
-     */
-    bezierat: function(a, b, c, d, t) {
-       return Math.pow(1-t, 3) * a + 
-            3 * t * Math.pow(1-t, 2) * b +
-            3 * Math.pow(t, 2) * (1 - t) * c +
-            Math.pow(t, 3) * d;
-    }
-});
-
-/**
- * @class An action that moves the target with a cubic Bezier curve to a destination point.
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.BezierBy
- */
-var BezierTo = BezierBy.extend(/** @lends cocos.actions.BezierTo# */{
-    startWithTarget: function(target) {
-        BezierTo.superclass.startWithTarget.call(this, target);
-        
-        var c = this.get('config');
-        c.controlPoint1 = geo.ccpSub(c.controlPoint1, this.get('startPosition'));
-        c.controlPoint2 = geo.ccpSub(c.controlPoint2, this.get('startPosition'));
-        c.endPosition = geo.ccpSub(c.endPosition, this.get('startPosition'));
-    }
-});
-
-var Blink = ActionInterval.extend(/** @lends cocos.actions.Blink# */{
-    /**
-     * @type {Integer}
-     */
-    times: 1,
-    
-    /**
-     * @class Blinks a Node object by modifying it's visible attribute
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ActionInterval
-     *
-     * @opts {Integer} blinks Number of times to blink
-     * @opts {Float} duration
-     */
-    init: function(opts) {
-        Blink.superclass.init.call(this, opts);
-        this.times = opts.blinks;
-    },
-    
-    update: function(t) {
-        if (! this.get_isDone()) {
-            var slice = 1 / this.times;
-            var m = t % slice;
-            this.target.set('visible', (m > slice/2));
-        }
-    },
-    
-    copy: function() {
-        return Blink.create({duration: this.get('duration'), blinks: this.get('times')});
-    },
-    
-    reverse: function() {
-        return this.copy();
-    }
-});
-
-/**
- * @class Fades out a cocos.nodes.Node to zero opacity
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionInterval
- */     
-var FadeOut = ActionInterval.extend(/** @lends cocos.actions.FadeOut# */{
-    update: function (t) {
-        var target = this.get('target');
-        if (!target) return;
-        target.set('opacity', 255 - (255 * t));
-    },
-
-    copy: function () {
-        return FadeOut.create({duration: this.get('duration')});
-    },
-    
-    reverse: function () {
-        return exports.FadeIn.create({duration: this.get('duration')});
-    }
-});
-
-
-/**
- * @class Fades in a cocos.nodes.Node to 100% opacity
- *
- * @memberOf cocos.actions
- * @extends cocos.actions.ActionInterval
- */
-var FadeIn = ActionInterval.extend(/** @lends cocos.actions.FadeIn# */{
-    update: function (t) {
-        var target = this.get('target');
-        if (!target) return;
-        target.set('opacity', t * 255);
-    },
-
-    copy: function () {
-        return FadeIn.create({duration: this.get('duration')});
-    },
-    
-    reverse: function () {
-        return exports.FadeOut.create({duration: this.get('duration')});
-    }
-});
-
-var FadeTo = ActionInterval.extend(/** @lends cocos.actions.FadeTo# */{
-    /**
-     * The final opacity
-     * @type Float
-     */
-    toOpacity: null,
-
-    /**
-     * The initial opacity
-     * @type Float
-     */
-    fromOpacity: null,
-
-    /**
-     * @class Fades a cocos.nodes.Node to a given opacity
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ActionInterval
-     */
-    init: function (opts) {
-        FadeTo.superclass.init.call(this, opts);
-        this.set('toOpacity', opts.toOpacity);
-    },
-
-    startWithTarget: function (target) {
-        FadeTo.superclass.startWithTarget.call(this, target);
-        this.set('fromOpacity', this.target.get('opacity'));
-    },
-
-    update: function (t) {
-        var target = this.get('target');
-        if (!target) return;
-
-        target.set('opacity', this.fromOpacity + ( this.toOpacity - this.fromOpacity ) * t);
-    },
-    
-    copy: function() {
-        return FadeTo.create({duration: this.get('duration'), toOpacity: this.get('toOpacity')});
-    }
-});
-
-var Sequence = ActionInterval.extend(/** @lends cocos.actions.Sequence# */{
-    /**
-     * Array of actions to run
-     * @type cocos.nodes.Node[]
-     */
-    actions: null,
-
-    split: 0,
-    last: 0,
-    
-    /**
-     * @class Runs a pair of actions sequentially, one after another
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ActionInterval
-     *
-     * @opt {cocos.actions.FiniteTimeAction} one 1st action to run
-     * @opt {cocos.actions.FiniteTimeAction} two 2nd action to run
-     */
-    init: function (opts) {
-        if (!opts.one) {
-            throw "Sequence argument one must be non-nil";
-        }
-        if (!opts.two) {
-            throw "Sequence argument two must be non-nil";
-        }
-        this.actions = [];
-        
-        var d = opts.one.get('duration') + opts.two.get('duration');
-        
-        Sequence.superclass.init.call(this, {duration: d});
-        
-        this.actions[0] = opts.one;
-        this.actions[1] = opts.two;
-    },
-    
-    startWithTarget: function (target) {
-        Sequence.superclass.startWithTarget.call(this, target);
-        this.split = this.actions[0].get('duration') / this.get('duration');
-        this.last = -1;
-    },
-
-    stop: function () {
-        this.actions[0].stop();
-        this.actions[1].stop();
-        Sequence.superclass.stop.call(this);
-    },
-
-    update: function (t) {
-        // This is confusing but will hopefully work better in conjunction
-        // with modifer actions like Repeat & Spawn...
-        var found = 0;
-        var new_t = 0;
-        
-        if (t >= this.split) {
-            found = 1;
-            if (this.split == 1) {
-                new_t = 1;
-            } else {
-                new_t = (t - this.split) / (1 - this.split);
-            }
-        } else {
-            found = 0;
-            if (this.split != 0) {
-                new_t = t / this.split;
-            } else {
-                new_t = 1;
-            }
-        }
-        if (this.last == -1 && found == 1) {
-            this.actions[0].startWithTarget(this.target);
-            this.actions[0].update(1);
-            this.actions[0].stop();
-        }
-        if (this.last != found) {
-            if (this.last != -1) {
-                this.actions[this.last].update(1);
-                this.actions[this.last].stop();
-            }
-            this.actions[found].startWithTarget(this.target);
-        }
-        this.actions[found].update(new_t);
-        this.last = found;
-    },
-
-    copy: function () {
-        // Constructor will copy actions 
-        return Sequence.create({actions: this.get('actions')});
-    },
-
-    reverse: function() {
-        return Sequence.create({actions: [this.actions[1].reverse(), this.actions[0].reverse()]});
-    }
-});
-
-util.extend(Sequence, /** @lends cocos.actions.Sequence */{
-    /** 
-     * Override BObject.create in order to implement recursive construction
-     * of actions array
-     */
-    create: function() {
-        // Don't copy actions array, copy the actions
-        var actions = arguments[0].actions;
-        var prev = actions[0].copy();
-        
-        // Recursively create Sequence with pair of actions
-        for (var i=1; i<actions.length; i++) {
-            var now = actions[i].copy();
-            if (now) {
-                prev = new this({one: prev, two: now});;
-            } else {
-                break;
-            }
-        }
-        return prev;
-    }
-});
-
-var Repeat = ActionInterval.extend(/** @lends cocos.actions.Repeat# */{
-    times: 1,
-    total: 0,
-    other: null,
-    
-    /**
-     * @class Repeats an action a number of times.
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ActionInterval
-     *
-     * @opt {cocos.actions.FiniteTimeAction} action Action to repeat
-     * @opt {Number} times Number of times to repeat
-     */
-     init: function(opts) {
-         var d = opts.action.get('duration') * opts.times;
-
-         Repeat.superclass.init.call(this, {duration: d});
-         
-         this.times = opts.times;
-         this.other = opts.action.copy();
-         this.total = 0;
-     },
-     
-     startWithTarget: function(target) {
-         this.total = 0;
-         Repeat.superclass.startWithTarget.call(this, target);
-         this.other.startWithTarget(target);
-     },
-     
-     stop: function() {
-         this.other.stop();
-         Repeat.superclass.stop.call(this);
-     },
-     
-     update: function(dt) {
-         var t = dt * this.times;
-         
-         if (t > (this.total+1)) {
-             this.other.update(1);
-             this.total += 1;
-             this.other.stop();
-             this.other.startWithTarget(this.target);
-             
-             // If repeat is over
-             if (this.total == this.times) {
-                 // set it in the original position
-                 this.other.update(0);
-             } else {
-                 // otherwise start next repeat
-                 this.other.update(t - this.total);
-             }
-         } else {
-             var r = t % 1.0;
-             
-             // fix last repeat position otherwise it could be 0
-             if (dt == 1) {
-                 r = 1;
-                 this.total += 1;
-             }
-             this.other.update(Math.min(r, 1));
-         }
-     },
-     
-     get_isDone: function() {
-         return this.total == this.times;
-     },
-     
-     copy: function() {
-         // Constructor copies action
-         return Repeat.create({action: this.other, times: this.times});
-     },
-     
-     reverse: function() {
-         return Repeat.create({action: this.other.reverse(), times: this.times});
-     }
-});
-
-var Spawn = ActionInterval.extend(/** @lends cocos.actions.Spawn# */{
-    one: null,
-    two: null,
-
-    /**
-     * @class Executes multiple actions simultaneously
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ActionInterval
-     *
-     * @opt {cocos.actions.FiniteTimeAction} one: first action to spawn
-     * @opt {cocos.actions.FiniteTimeAction} two: second action to spawn
-     */
-    init: function (opts) {
-        var action1 = opts.one, 
-            action2 = opts.two;
-            
-        if (!action1 || !action2) {
-            throw "cocos.actions.Spawn: required actions missing";
-        }
-        var d1 = action1.get('duration'), 
-            d2 = action2.get('duration');
-        
-        Spawn.superclass.init.call(this, {duration: Math.max(d1, d2)});
-        
-        this.set('one', action1);
-        this.set('two', action2);
-        
-        if (d1 > d2) {
-            this.set('two', Sequence.create({actions: [
-                action2, 
-                DelayTime.create({duration: d1-d2})
-            ]}));
-        } else if (d1 < d2) {
-            this.set('one', Sequence.create({actions: [
-                action1,
-                DelayTime.create({duration: d2-d1})
-            ]}));
-        }
-    },
-    
-    startWithTarget: function (target) {
-        Spawn.superclass.startWithTarget.call(this, target);
-        this.get('one').startWithTarget(this.target);
-        this.get('two').startWithTarget(this.target);
-    },
-    
-    stop: function () {
-        this.get('one').stop();
-        this.get('two').stop();
-        Spawn.superclass.stop.call(this);
-    },
-    
-    step: function (dt) {
-        if (this._firstTick) {
-            this._firstTick = false;
-            this.elapsed = 0;
-        } else {
-            this.elapsed += dt;
-        }
-        this.get('one').step(dt);
-        this.get('two').step(dt);
-    },
-    
-    update: function (t) {
-        this.get('one').update(t);
-        this.get('two').update(t);
-    },
-    
-    copy: function () {
-        return Spawn.create({one: this.get('one').copy(), two: this.get('two').copy()});
-    },
-    
-    reverse: function () {
-        return Spawn.create({one: this.get('one').reverse(), two: this.get('two').reverse()});
-    }
-});
-
-util.extend(Spawn, /** @lends cocos.actions.Spawn */{
-    /**
-     * Helper class function to create Spawn object from array of actions
-     *
-     * @opt {Array} actions: list of actions to run simultaneously
-     */
-    initWithActions: function (opts) {
-        var now, prev = opts.actions.shift();
-        while (opts.actions.length > 0) {
-            now = opts.actions.shift();
-            if (now) {
-                prev = this.create({one: prev, two: now});
-            } else {
-                break;
-            }
-        }
-        return prev;
-    }
-});
-
-var Animate = ActionInterval.extend(/** @lends cocos.actions.Animate# */{
-    animation: null,
-    restoreOriginalFrame: true,
-    origFrame: null,
-
-
-    /**
-     * @class Animates a sprite given the name of an Animation
-     *
-     * @memberOf cocos.actions
-     * @constructs
-     * @extends cocos.actions.ActionInterval
-     *
-     * @opt {Float} duration Number of seconds to run action for
-     * @opt {cocos.Animation} animation Animation to run
-     * @opt {Boolean} [restoreOriginalFrame=true] Return to first frame when finished
-     */
-    init: function (opts) {
-        this.animation = opts.animation;
-        this.restoreOriginalFrame = opts.restoreOriginalFrame !== false;
-        opts.duration = this.animation.frames.length * this.animation.delay;
-
-        Animate.superclass.init.call(this, opts);
-    },
-
-    startWithTarget: function (target) {
-        Animate.superclass.startWithTarget.call(this, target);
-
-        if (this.restoreOriginalFrame) {
-            this.set('origFrame', this.target.get('displayedFrame'));
-        }
-    },
-
-    stop: function () {
-        if (this.target && this.restoreOriginalFrame) {
-            var sprite = this.target;
-            sprite.set('displayFrame', this.origFrame);
-        }
-
-        Animate.superclass.stop.call(this);
-    },
-
-    update: function (t) {
-        var frames = this.animation.get('frames'),
-            numberOfFrames = frames.length,
-            idx = Math.floor(t * numberOfFrames);
-
-        if (idx >= numberOfFrames) {
-            idx = numberOfFrames - 1;
-        }
-
-        var sprite = this.target;
-        if (!sprite.isFrameDisplayed(frames[idx])) {
-            sprite.set('displayFrame', frames[idx]);
-        }
-    },
-
-    copy: function () {
-        return Animate.create({animation: this.animation, restoreOriginalFrame: this.restoreOriginalFrame});
-    }
-
-});
-
-exports.ActionInterval = ActionInterval;
-exports.DelayTime = DelayTime;
-exports.ScaleTo = ScaleTo;
-exports.ScaleBy = ScaleBy;
-exports.RotateTo = RotateTo;
-exports.RotateBy = RotateBy;
-exports.MoveTo = MoveTo;
-exports.MoveBy = MoveBy;
-exports.JumpBy = JumpBy;
-exports.JumpTo = JumpTo;
-exports.BezierBy = BezierBy;
-exports.BezierTo = BezierTo;
-exports.Blink = Blink;
-exports.FadeIn = FadeIn;
-exports.FadeOut = FadeOut;
-exports.FadeTo = FadeTo;
-exports.Spawn = Spawn;
-exports.Sequence = Sequence;
-exports.Repeat = Repeat;
-exports.Animate = Animate;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/actions/ActionInterval.js
-
-
-__jah__.resources["/libs/cocos2d/actions/index.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    path = require('path');
-
-var modules = 'Action ActionInterval ActionInstant ActionEase'.split(' ');
-
-/**
- * @memberOf cocos
- * @namespace Actions used to animate or change a Node
- */
-var actions = {};
-
-util.each(modules, function (mod, i) {
-    util.extend(actions, require('./' + mod));
-});
-
-module.exports = actions;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/actions/index.js
-
-
-__jah__.resources["/libs/cocos2d/Animation.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util');
-
-var Animation = BObject.extend(/** @lends cocos.Animation# */{
-    name: null,
-    delay: 0.0,
-    frames: null,
-
-    /** 
-     * A cocos.Animation object is used to perform animations on the Sprite objects.
-     * 
-     * The Animation object contains cocos.SpriteFrame objects, and a possible delay between the frames.
-     * You can animate a cocos.Animation object by using the cocos.actions.Animate action.
-     * 
-     * @memberOf cocos
-     * @constructs
-     * @extends BObject
-     *
-     * @opt {cocos.SpriteFrame[]} frames Frames to animate
-     * @opt {Float} [delay=0.0] Delay between each frame
-     * 
-     * @example
-     * var animation = cocos.Animation.create({frames: [f1, f2, f3], delay: 0.1});
-     * sprite.runAction(cocos.actions.Animate.create({animation: animation}));
-     */
-    init: function (opts) {
-        Animation.superclass.init.call(this, opts);
-
-        this.frames = opts.frames || [];
-        this.delay  = opts.delay  || 0.0;
-    }
-});
-
-exports.Animation = Animation;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/Animation.js
-
-
 __jah__.resources["/libs/cocos2d/AnimationCache.js"] = {data: function (exports, require, module, __filename, __dirname) {
 /*globals module exports resource require BObject BArray*/
 /*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
@@ -2639,20 +4142,6 @@ util.extend(AnimationCache, /** @lends cocos.AnimationCache */{
 exports.AnimationCache = AnimationCache;
 
 }, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/AnimationCache.js
-
-
-__jah__.resources["/libs/cocos2d/config.js"] = {data: function (exports, require, module, __filename, __dirname) {
-module.exports = {
-    // Invert the Y axis so origin is at the bottom left
-    FLIP_Y_AXIS: false,
-    
-    // No implemented yet
-    ENABLE_WEB_GL: false,
-
-    SHOW_REDRAW_REGIONS: false
-}
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/config.js
 
 
 __jah__.resources["/libs/cocos2d/Director.js"] = {data: function (exports, require, module, __filename, __dirname) {
@@ -3100,278 +4589,250 @@ exports.DirectorFixedSpeed = DirectorFixedSpeed;
 }, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/Director.js
 
 
-__jah__.resources["/libs/cocos2d/EventDispatcher.js"] = {data: function (exports, require, module, __filename, __dirname) {
+__jah__.resources["/libs/cocos2d/Animation.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util');
+
+var Animation = BObject.extend(/** @lends cocos.Animation# */{
+    name: null,
+    delay: 0.0,
+    frames: null,
+
+    /** 
+     * A cocos.Animation object is used to perform animations on the Sprite objects.
+     * 
+     * The Animation object contains cocos.SpriteFrame objects, and a possible delay between the frames.
+     * You can animate a cocos.Animation object by using the cocos.actions.Animate action.
+     * 
+     * @memberOf cocos
+     * @constructs
+     * @extends BObject
+     *
+     * @opt {cocos.SpriteFrame[]} frames Frames to animate
+     * @opt {Float} [delay=0.0] Delay between each frame
+     * 
+     * @example
+     * var animation = cocos.Animation.create({frames: [f1, f2, f3], delay: 0.1});
+     * sprite.runAction(cocos.actions.Animate.create({animation: animation}));
+     */
+    init: function (opts) {
+        Animation.superclass.init.call(this, opts);
+
+        this.frames = opts.frames || [];
+        this.delay  = opts.delay  || 0.0;
+    }
+});
+
+exports.Animation = Animation;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/Animation.js
+
+
+__jah__.resources["/libs/cocos2d/SpriteFrameCache.js"] = {data: function (exports, require, module, __filename, __dirname) {
 /*globals module exports resource require BObject BArray FLIP_Y_AXIS*/
 /*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
 "use strict";
 
 var util = require('util'),
-    geo = require('geometry');
+    geo = require('geometry'),
+    Plist = require('Plist').Plist,
+    SpriteFrame = require('./SpriteFrame').SpriteFrame,
+    Texture2D = require('./Texture2D').Texture2D;
 
-var EventDispatcher = BObject.extend(/** @lends cocos.EventDispatcher# */{
-    dispatchEvents: true,
-    keyboardDelegates: null,
-    mouseDelegates: null,
-    _keysDown: null,
-    
+var SpriteFrameCache = BObject.extend(/** @lends cocos.SpriteFrameCache# */{
     /**
-     * This singleton is responsible for dispatching Mouse and Keyboard events.
-     *
+     * List of sprite frames
+     * @type Object
+     */
+    spriteFrames: null,
+
+    /**
+     * List of sprite frame aliases
+     * @type Object
+     */
+    spriteFrameAliases: null,
+
+
+    /**
      * @memberOf cocos
-     * @constructs
      * @extends BObject
+     * @constructs
      * @singleton
      */
     init: function () {
-        EventDispatcher.superclass.init.call(this);
+        SpriteFrameCache.superclass.init.call(this);
 
-        this.keyboardDelegates = [];
-        this.mouseDelegates = [];
-
-        this._keysDown = {};
+        this.set('spriteFrames', {});
+        this.set('spriteFrameAliases', {});
     },
 
-    addDelegate: function (opts) {
-        var delegate = opts.delegate,
-            priority = opts.priority,
-            flags    = opts.flags,
-            list     = opts.list;
+    /**
+     * Add SpriteFrame(s) to the cache
+     *
+     * @param {String} opts.file The filename of a Zwoptex .plist containing the frame definiitons.
+     */
+    addSpriteFrames: function (opts) {
+        var plistPath = opts.file,
+            plist = Plist.create({file: plistPath}),
+            plistData = plist.get('data');
 
-        var listElement = {
-            delegate: delegate,
-            priority: priority,
-            flags: flags
-        };
 
-        var added = false;
-        for (var i = 0; i < list.length; i++) {
-            var elem = list[i];
-            if (priority < elem.priority) {
-                // Priority is lower, so insert before elem
-                list.splice(i, 0, listElement);
-                added = true;
-                break;
-            }
+        var metaDataDict = plistData.metadata,
+            framesDict = plistData.frames;
+
+        var format = 0,
+            texturePath = null;
+
+        if (metaDataDict) {
+            format = metaDataDict.format;
+            // Get texture path from meta data
+            texturePath = metaDataDict.textureFileName;
         }
 
-        // High priority; append to array
-        if (!added) {
-            list.push(listElement);
-        }
-    },
-
-    removeDelegate: function (opts) {
-        var delegate = opts.delegate,
-            list = opts.list;
-
-        var idx = -1,
-            i;
-        for (i = 0; i < list.length; i++) {
-            var l = list[i];
-            if (l.delegate == delegate) {
-                idx = i;
-                break;
-            }
-        }
-        if (idx == -1) {
-            return;
-        }
-        list.splice(idx, 1);
-    },
-    removeAllDelegates: function (opts) {
-        var list = opts.list;
-
-        list.splice(0, list.length - 1);
-    },
-
-    addMouseDelegate: function (opts) {
-        var delegate = opts.delegate,
-            priority = opts.priority;
-
-        var flags = 0;
-
-        // TODO flags
-
-        this.addDelegate({delegate: delegate, priority: priority, flags: flags, list: this.mouseDelegates});
-    },
-
-    removeMouseDelegate: function (opts) {
-        var delegate = opts.delegate;
-
-        this.removeDelegate({delegate: delegate, list: this.mouseDelegates});
-    },
-
-    removeAllMouseDelegate: function () {
-        this.removeAllDelegates({list: this.mouseDelegates});
-    },
-
-    addKeyboardDelegate: function (opts) {
-        var delegate = opts.delegate,
-            priority = opts.priority;
-
-        var flags = 0;
-
-        // TODO flags
-
-        this.addDelegate({delegate: delegate, priority: priority, flags: flags, list: this.keyboardDelegates});
-    },
-
-    removeKeyboardDelegate: function (opts) {
-        var delegate = opts.delegate;
-
-        this.removeDelegate({delegate: delegate, list: this.keyboardDelegates});
-    },
-
-    removeAllKeyboardDelegate: function () {
-        this.removeAllDelegates({list: this.keyboardDelegates});
-    },
-
-
-
-    // Mouse Events
-
-    mouseDown: function (evt) {
-        if (!this.dispatchEvents) {
-            return;
+        if (!texturePath) {
+            // No texture path so assuming it's the same name as the .plist but ending in .png
+            texturePath = plistPath.replace(/\.plist$/i, '.png');
         }
 
-        this._previousMouseMovePosition = geo.ccp(evt.clientX, evt.clientY);
-        this._previousMouseDragPosition = geo.ccp(evt.clientX, evt.clientY);
 
-        for (var i = 0; i < this.mouseDelegates.length; i++) {
-            var entry = this.mouseDelegates[i];
-            if (entry.delegate.mouseDown) {
-                var swallows = entry.delegate.mouseDown(evt);
-                if (swallows) {
+        var texture = Texture2D.create({file: texturePath});
+
+        // Add frames
+        for (var frameDictKey in framesDict) {
+            if (framesDict.hasOwnProperty(frameDictKey)) {
+                var frameDict = framesDict[frameDictKey],
+                    spriteFrame = null;
+
+                switch (format) {
+                case 0:
+                    var x = frameDict.x,
+                        y =  frameDict.y,
+                        w =  frameDict.width,
+                        h =  frameDict.height,
+                        ox = frameDict.offsetX,
+                        oy = frameDict.offsetY,
+                        ow = frameDict.originalWidth,
+                        oh = frameDict.originalHeight;
+
+                    // check ow/oh
+                    if (!ow || !oh) {
+                        //console.log("cocos2d: WARNING: originalWidth/Height not found on the CCSpriteFrame. AnchorPoint won't work as expected. Regenerate the .plist");
+                    }
+
+                    if (FLIP_Y_AXIS) {
+                        oy *= -1;
+                    }
+
+                    // abs ow/oh
+                    ow = Math.abs(ow);
+                    oh = Math.abs(oh);
+
+                    // create frame
+                    spriteFrame = SpriteFrame.create({texture: texture,
+                                                         rect: geo.rectMake(x, y, w, h),
+                                                       rotate: false,
+                                                       offset: geo.ccp(ox, oy),
+                                                 originalSize: geo.sizeMake(ow, oh)});
                     break;
-                }
-            }
-        }
-    },
-    mouseMoved: function (evt) {
-        if (!this.dispatchEvents) {
-            return;
-        }
 
-        if (this._previousMouseMovePosition) {
-            evt.deltaX = evt.clientX - this._previousMouseMovePosition.x;
-            evt.deltaY = evt.clientY - this._previousMouseMovePosition.y;
-            if (FLIP_Y_AXIS) {
-                evt.deltaY *= -1;
-            }
-        } else {
-            evt.deltaX = 0;
-            evt.deltaY = 0;
-        }
-        this._previousMouseMovePosition = geo.ccp(evt.clientX, evt.clientY);
+                case 1:
+                case 2:
+                    var frame      = geo.rectFromString(frameDict.frame),
+                        rotated    = !!frameDict.rotated,
+                        offset     = geo.pointFromString(frameDict.offset),
+                        sourceSize = geo.sizeFromString(frameDict.sourceSize);
 
-        for (var i = 0; i < this.mouseDelegates.length; i++) {
-            var entry = this.mouseDelegates[i];
-            if (entry.delegate.mouseMoved) {
-                var swallows = entry.delegate.mouseMoved(evt);
-                if (swallows) {
+                    if (FLIP_Y_AXIS) {
+                        offset.y *= -1;
+                    }
+
+
+                    // create frame
+                    spriteFrame = SpriteFrame.create({texture: texture,
+                                                         rect: frame,
+                                                       rotate: rotated,
+                                                       offset: offset,
+                                                 originalSize: sourceSize});
                     break;
-                }
-            }
-        }
-    },
-    mouseDragged: function (evt) {
-        if (!this.dispatchEvents) {
-            return;
-        }
 
-        if (this._previousMouseDragPosition) {
-            evt.deltaX = evt.clientX - this._previousMouseDragPosition.x;
-            evt.deltaY = evt.clientY - this._previousMouseDragPosition.y;
-            if (FLIP_Y_AXIS) {
-                evt.deltaY *= -1;
-            }
-        } else {
-            evt.deltaX = 0;
-            evt.deltaY = 0;
-        }
-        this._previousMouseDragPosition = geo.ccp(evt.clientX, evt.clientY);
+                case 3:
+                    var spriteSize       = geo.sizeFromString(frameDict.spriteSize),
+                        spriteOffset     = geo.pointFromString(frameDict.spriteOffset),
+                        spriteSourceSize = geo.sizeFromString(frameDict.spriteSourceSize),
+                        textureRect      = geo.rectFromString(frameDict.textureRect),
+                        textureRotated   = frameDict.textureRotated;
+                    
 
-        for (var i = 0; i < this.mouseDelegates.length; i++) {
-            var entry = this.mouseDelegates[i];
-            if (entry.delegate.mouseDragged) {
-                var swallows = entry.delegate.mouseDragged(evt);
-                if (swallows) {
+                    if (FLIP_Y_AXIS) {
+                        spriteOffset.y *= -1;
+                    }
+
+                    // get aliases
+                    var aliases = frameDict.aliases;
+                    for (var i = 0, len = aliases.length; i < len; i++) {
+                        var alias = aliases[i];
+                        this.get('spriteFrameAliases')[frameDictKey] = alias;
+                    }
+                    
+                    // create frame
+                    spriteFrame = SpriteFrame.create({texture: texture,
+                                                         rect: geo.rectMake(textureRect.origin.x, textureRect.origin.y, spriteSize.width, spriteSize.height),
+                                                       rotate: textureRotated,
+                                                       offset: spriteOffset,
+                                                 originalSize: spriteSourceSize});
                     break;
-                }
-            }
-        }
-    },
-    mouseUp: function (evt) {
-        if (!this.dispatchEvents) {
-            return;
-        }
 
-        for (var i = 0; i < this.mouseDelegates.length; i++) {
-            var entry = this.mouseDelegates[i];
-            if (entry.delegate.mouseUp) {
-                var swallows = entry.delegate.mouseUp(evt);
-                if (swallows) {
-                    break;
+                default:
+                    throw "Unsupported Zwoptex format: " + format;
                 }
+
+                // Add sprite frame
+                this.get('spriteFrames')[frameDictKey] = spriteFrame;
             }
         }
     },
 
-    // Keyboard events
-    keyDown: function (evt) {
-        var kc = evt.keyCode;
-        if (!this.dispatchEvents || this._keysDown[kc]) {
-            return;
-        }
+    /**
+     * Get a single SpriteFrame
+     *
+     * @param {String} opts.name The name of the sprite frame
+     * @returns {cocos.SpriteFrame} The sprite frame
+     */
+    getSpriteFrame: function (opts) {
+        var name = opts.name;
 
-        this._keysDown[kc] = true;
+        var frame = this.get('spriteFrames')[name];
 
-        for (var i = 0; i < this.keyboardDelegates.length; i++) {
-            var entry = this.keyboardDelegates[i];
-            if (entry.delegate.keyDown) {
-                var swallows = entry.delegate.keyDown(evt);
-                if (swallows) {
-                    break;
-                }
+        if (!frame) {
+            // No frame, look for an alias
+            var key = this.get('spriteFrameAliases')[name];
+
+            if (key) {
+                frame = this.get('spriteFrames')[key];
+            }
+
+            if (!frame) {
+                throw "Unable to find frame: " + name;
             }
         }
-    },
 
-    keyUp: function (evt) {
-        if (!this.dispatchEvents) {
-            return;
-        }
-
-        var kc = evt.keyCode;
-        if (this._keysDown[kc]) {
-            delete this._keysDown[kc];
-        }
-
-        for (var i = 0; i < this.keyboardDelegates.length; i++) {
-            var entry = this.keyboardDelegates[i];
-            if (entry.delegate.keyUp) {
-                var swallows = entry.delegate.keyUp(evt);
-                if (swallows) {
-                    break;
-                }
-            }
-        }
+        return frame;
     }
-
 });
 
 /**
  * Class methods
  */
-util.extend(EventDispatcher, /** @lends cocos.EventDispatcher */{
+util.extend(SpriteFrameCache, /** @lends cocos.SpriteFrameCache */{
     /**
-     * A shared singleton instance of cocos.EventDispatcher
-     *
-     * @getter sharedDispatcher
-     * @type cocos.EventDispatcher
+     * @field
+     * @name cocos.SpriteFrameCache.sharedSpriteFrameCache
+     * @type cocos.SpriteFrameCache
      */
-    get_sharedDispatcher: function (key) {
+    get_sharedSpriteFrameCache: function (key) {
         if (!this._instance) {
             this._instance = this.create();
         }
@@ -3379,18 +4840,24 @@ util.extend(EventDispatcher, /** @lends cocos.EventDispatcher */{
         return this._instance;
     }
 });
-exports.EventDispatcher = EventDispatcher;
 
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/EventDispatcher.js
+exports.SpriteFrameCache = SpriteFrameCache;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/SpriteFrameCache.js
 
 
-__jah__.resources["/libs/cocos2d/globals.js"] = {data: function (exports, require, module, __filename, __dirname) {
-module.exports = { FLIP_Y_AXIS: false
-                 , ENABLE_WEB_GL: false
-                 , SHOW_REDRAW_REGIONS: false
-                 }
+__jah__.resources["/libs/cocos2d/config.js"] = {data: function (exports, require, module, __filename, __dirname) {
+module.exports = {
+    // Invert the Y axis so origin is at the bottom left
+    FLIP_Y_AXIS: false,
+    
+    // No implemented yet
+    ENABLE_WEB_GL: false,
 
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/globals.js
+    SHOW_REDRAW_REGIONS: false
+}
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/config.js
 
 
 __jah__.resources["/libs/cocos2d/index.js"] = {data: function (exports, require, module, __filename, __dirname) {
@@ -3420,548 +4887,2588 @@ module.exports = cocos;
 }, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/index.js
 
 
-__jah__.resources["/libs/cocos2d/init.js"] = {data: function (exports, require, module, __filename, __dirname) {
-var path = require('path')
-
-exports.main = function () {
-    require.paths.push(path.join(__dirname, 'libs'))
-
-    /** @ignore
-     * Make BObject and BArray into globals
-     */
-    window.BObject = require('bobject').BObject;
-    window.BArray = require('bobject').BArray;
-
-    // Load default cocos2d config
-    var config = require('./config')
-    for (var k in config) {
-        if (config.hasOwnProperty(k)) {
-            window[k] = config[k]
-        }
-    }
-
-    // Load appliaction config
-    if (path.exists('/config.js')) {
-        config = require('/config')
-        for (var k in config) {
-            if (config.hasOwnProperty(k)) {
-                window[k] = config[k]
-            }
-        }
-    }
-};
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/init.js
-
-
-__jah__.resources["/libs/cocos2d/libs/base64.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/**
- * Thin wrapper around JXG's Base64 utils
+__jah__.resources["/libs/cocos2d/libs/qunit.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*
+ * QUnit - A JavaScript Unit Testing Framework
+ * 
+ * http://docs.jquery.com/QUnit
+ *
+ * Copyright (c) 2011 John Resig, Jörn Zaefferer
+ * Dual licensed under the MIT (MIT-LICENSE.txt)
+ * or GPL (GPL-LICENSE.txt) licenses.
  */
 
-/** @ignore */
-var JXG = require('JXGUtil');
+(function(window) {
+
+var defined = {
+	setTimeout: typeof window.setTimeout !== "undefined",
+	sessionStorage: (function() {
+		try {
+			return !!sessionStorage.getItem;
+		} catch(e){
+			return false;
+		}
+  })()
+}
+
+var testId = 0;
+
+var Test = function(name, testName, expected, testEnvironmentArg, async, callback) {
+	this.name = name;
+	this.testName = testName;
+	this.expected = expected;
+	this.testEnvironmentArg = testEnvironmentArg;
+	this.async = async;
+	this.callback = callback;
+	this.assertions = [];
+};
+Test.prototype = {
+	init: function() {
+		var tests = id("qunit-tests");
+		if (tests) {
+			var b = document.createElement("strong");
+				b.innerHTML = "Running " + this.name;
+			var li = document.createElement("li");
+				li.appendChild( b );
+				li.id = this.id = "test-output" + testId++;
+			tests.appendChild( li );
+		}
+	},
+	setup: function() {
+		if (this.module != config.previousModule) {
+			if ( config.previousModule ) {
+				QUnit.moduleDone( {
+					name: config.previousModule,
+					failed: config.moduleStats.bad,
+					passed: config.moduleStats.all - config.moduleStats.bad,
+					total: config.moduleStats.all
+				} );
+			}
+			config.previousModule = this.module;
+			config.moduleStats = { all: 0, bad: 0 };
+			QUnit.moduleStart( {
+				name: this.module
+			} );
+		}
+
+		config.current = this;
+		this.testEnvironment = extend({
+			setup: function() {},
+			teardown: function() {}
+		}, this.moduleTestEnvironment);
+		if (this.testEnvironmentArg) {
+			extend(this.testEnvironment, this.testEnvironmentArg);
+		}
+
+		QUnit.testStart( {
+			name: this.testName
+		} );
+
+		// allow utility functions to access the current test environment
+		// TODO why??
+		QUnit.current_testEnvironment = this.testEnvironment;
+		
+		try {
+			if ( !config.pollution ) {
+				saveGlobal();
+			}
+
+			this.testEnvironment.setup.call(this.testEnvironment);
+		} catch(e) {
+			QUnit.ok( false, "Setup failed on " + this.testName + ": " + e.message );
+		}
+	},
+	run: function() {
+		if ( this.async ) {
+			QUnit.stop();
+		}
+
+		if ( config.notrycatch ) {
+			this.callback.call(this.testEnvironment);
+			return;
+		}
+		try {
+			this.callback.call(this.testEnvironment);
+		} catch(e) {
+			fail("Test " + this.testName + " died, exception and test follows", e, this.callback);
+			QUnit.ok( false, "Died on test #" + (this.assertions.length + 1) + ": " + e.message + " - " + QUnit.jsDump.parse(e) );
+			// else next test will carry the responsibility
+			saveGlobal();
+
+			// Restart the tests if they're blocking
+			if ( config.blocking ) {
+				start();
+			}
+		}
+	},
+	teardown: function() {
+		try {
+			checkPollution();
+			this.testEnvironment.teardown.call(this.testEnvironment);
+		} catch(e) {
+			QUnit.ok( false, "Teardown failed on " + this.testName + ": " + e.message );
+		}
+	},
+	finish: function() {
+		if ( this.expected && this.expected != this.assertions.length ) {
+			QUnit.ok( false, "Expected " + this.expected + " assertions, but " + this.assertions.length + " were run" );
+		}
+		
+		var good = 0, bad = 0,
+			tests = id("qunit-tests");
+
+		config.stats.all += this.assertions.length;
+		config.moduleStats.all += this.assertions.length;
+
+		if ( tests ) {
+			var ol  = document.createElement("ol");
+
+			for ( var i = 0; i < this.assertions.length; i++ ) {
+				var assertion = this.assertions[i];
+
+				var li = document.createElement("li");
+				li.className = assertion.result ? "pass" : "fail";
+				li.innerHTML = assertion.message || (assertion.result ? "okay" : "failed");
+				ol.appendChild( li );
+
+				if ( assertion.result ) {
+					good++;
+				} else {
+					bad++;
+					config.stats.bad++;
+					config.moduleStats.bad++;
+				}
+			}
+
+			// store result when possible
+			defined.sessionStorage && sessionStorage.setItem("qunit-" + this.testName, bad);
+
+			if (bad == 0) {
+				ol.style.display = "none";
+			}
+
+			var b = document.createElement("strong");
+			b.innerHTML = this.name + " <b class='counts'>(<b class='failed'>" + bad + "</b>, <b class='passed'>" + good + "</b>, " + this.assertions.length + ")</b>";
+			
+			addEvent(b, "click", function() {
+				var next = b.nextSibling, display = next.style.display;
+				next.style.display = display === "none" ? "block" : "none";
+			});
+			
+			addEvent(b, "dblclick", function(e) {
+				var target = e && e.target ? e.target : window.event.srcElement;
+				if ( target.nodeName.toLowerCase() == "span" || target.nodeName.toLowerCase() == "b" ) {
+					target = target.parentNode;
+				}
+				if ( window.location && target.nodeName.toLowerCase() === "strong" ) {
+					window.location.search = "?" + encodeURIComponent(getText([target]).replace(/\(.+\)$/, "").replace(/(^\s*|\s*$)/g, ""));
+				}
+			});
+
+			var li = id(this.id);
+			li.className = bad ? "fail" : "pass";
+			li.style.display = resultDisplayStyle(!bad);
+			li.removeChild( li.firstChild );
+			li.appendChild( b );
+			li.appendChild( ol );
+
+		} else {
+			for ( var i = 0; i < this.assertions.length; i++ ) {
+				if ( !this.assertions[i].result ) {
+					bad++;
+					config.stats.bad++;
+					config.moduleStats.bad++;
+				}
+			}
+		}
+
+		try {
+			QUnit.reset();
+		} catch(e) {
+			fail("reset() failed, following Test " + this.testName + ", exception and reset fn follows", e, QUnit.reset);
+		}
+
+		QUnit.testDone( {
+			name: this.testName,
+			failed: bad,
+			passed: this.assertions.length - bad,
+			total: this.assertions.length
+		} );
+	},
+	
+	queue: function() {
+		var test = this;
+		synchronize(function() {
+			test.init();
+		});
+		function run() {
+			// each of these can by async
+			synchronize(function() {
+				test.setup();
+			});
+			synchronize(function() {
+				test.run();
+			});
+			synchronize(function() {
+				test.teardown();
+			});
+			synchronize(function() {
+				test.finish();
+			});
+		}
+		// defer when previous test run passed, if storage is available
+		var bad = defined.sessionStorage && +sessionStorage.getItem("qunit-" + this.testName);
+		if (bad) {
+			run();
+		} else {
+			synchronize(run);
+		};
+	}
+	
+}
+
+var QUnit = {
+
+	// call on start of module test to prepend name to all tests
+	module: function(name, testEnvironment) {
+		config.currentModule = name;
+		config.currentModuleTestEnviroment = testEnvironment;
+	},
+
+	asyncTest: function(testName, expected, callback) {
+		if ( arguments.length === 2 ) {
+			callback = expected;
+			expected = 0;
+		}
+
+		QUnit.test(testName, expected, callback, true);
+	},
+	
+	test: function(testName, expected, callback, async) {
+		var name = '<span class="test-name">' + testName + '</span>', testEnvironmentArg;
+
+		if ( arguments.length === 2 ) {
+			callback = expected;
+			expected = null;
+		}
+		// is 2nd argument a testEnvironment?
+		if ( expected && typeof expected === 'object') {
+			testEnvironmentArg =  expected;
+			expected = null;
+		}
+
+		if ( config.currentModule ) {
+			name = '<span class="module-name">' + config.currentModule + "</span>: " + name;
+		}
+
+		if ( !validTest(config.currentModule + ": " + testName) ) {
+			return;
+		}
+		
+		var test = new Test(name, testName, expected, testEnvironmentArg, async, callback);
+		test.module = config.currentModule;
+		test.moduleTestEnvironment = config.currentModuleTestEnviroment;
+		test.queue();
+	},
+	
+	/**
+	 * Specify the number of expected assertions to gurantee that failed test (no assertions are run at all) don't slip through.
+	 */
+	expect: function(asserts) {
+		config.current.expected = asserts;
+	},
+
+	/**
+	 * Asserts true.
+	 * @example ok( "asdfasdf".length > 5, "There must be at least 5 chars" );
+	 */
+	ok: function(a, msg) {
+		a = !!a;
+		var details = {
+			result: a,
+			message: msg
+		};
+		msg = escapeHtml(msg);
+		QUnit.log(details);
+		config.current.assertions.push({
+			result: a,
+			message: msg
+		});
+	},
+
+	/**
+	 * Checks that the first two arguments are equal, with an optional message.
+	 * Prints out both actual and expected values.
+	 *
+	 * Prefered to ok( actual == expected, message )
+	 *
+	 * @example equal( format("Received {0} bytes.", 2), "Received 2 bytes." );
+	 *
+	 * @param Object actual
+	 * @param Object expected
+	 * @param String message (optional)
+	 */
+	equal: function(actual, expected, message) {
+		QUnit.push(expected == actual, actual, expected, message);
+	},
+
+	notEqual: function(actual, expected, message) {
+		QUnit.push(expected != actual, actual, expected, message);
+	},
+	
+	deepEqual: function(actual, expected, message) {
+		QUnit.push(QUnit.equiv(actual, expected), actual, expected, message);
+	},
+
+	notDeepEqual: function(actual, expected, message) {
+		QUnit.push(!QUnit.equiv(actual, expected), actual, expected, message);
+	},
+
+	strictEqual: function(actual, expected, message) {
+		QUnit.push(expected === actual, actual, expected, message);
+	},
+
+	notStrictEqual: function(actual, expected, message) {
+		QUnit.push(expected !== actual, actual, expected, message);
+	},
+
+	raises: function(block, expected, message) {
+		var actual, ok = false;
+	
+		if (typeof expected === 'string') {
+			message = expected;
+			expected = null;
+		}
+	
+		try {
+			block();
+		} catch (e) {
+			actual = e;
+		}
+	
+		if (actual) {
+			// we don't want to validate thrown error
+			if (!expected) {
+				ok = true;
+			// expected is a regexp	
+			} else if (QUnit.objectType(expected) === "regexp") {
+				ok = expected.test(actual);
+			// expected is a constructor	
+			} else if (actual instanceof expected) {
+				ok = true;
+			// expected is a validation function which returns true is validation passed	
+			} else if (expected.call({}, actual) === true) {
+				ok = true;
+			}
+		}
+			
+		QUnit.ok(ok, message);
+	},
+
+	start: function() {
+		config.semaphore--;
+		if (config.semaphore > 0) {
+			// don't start until equal number of stop-calls
+			return;
+		}
+		if (config.semaphore < 0) {
+			// ignore if start is called more often then stop
+			config.semaphore = 0;
+		}
+		// A slight delay, to avoid any current callbacks
+		if ( defined.setTimeout ) {
+			window.setTimeout(function() {
+				if ( config.timeout ) {
+					clearTimeout(config.timeout);
+				}
+
+				config.blocking = false;
+				process();
+			}, 13);
+		} else {
+			config.blocking = false;
+			process();
+		}
+	},
+	
+	stop: function(timeout) {
+		config.semaphore++;
+		config.blocking = true;
+
+		if ( timeout && defined.setTimeout ) {
+			clearTimeout(config.timeout);
+			config.timeout = window.setTimeout(function() {
+				QUnit.ok( false, "Test timed out" );
+				QUnit.start();
+			}, timeout);
+		}
+	}
+
+};
+
+// Backwards compatibility, deprecated
+QUnit.equals = QUnit.equal;
+QUnit.same = QUnit.deepEqual;
+
+// Maintain internal state
+var config = {
+	// The queue of tests to run
+	queue: [],
+
+	// block until document ready
+	blocking: true
+};
+
+// Load paramaters
+(function() {
+	var location = window.location || { search: "", protocol: "file:" },
+		GETParams = location.search.slice(1).split('&');
+
+	for ( var i = 0; i < GETParams.length; i++ ) {
+		GETParams[i] = decodeURIComponent( GETParams[i] );
+		if ( GETParams[i] === "noglobals" ) {
+			GETParams.splice( i, 1 );
+			i--;
+			config.noglobals = true;
+		} else if ( GETParams[i] === "notrycatch" ) {
+			GETParams.splice( i, 1 );
+			i--;
+			config.notrycatch = true;
+		} else if ( GETParams[i].search('=') > -1 ) {
+			GETParams.splice( i, 1 );
+			i--;
+		}
+	}
+	
+	// restrict modules/tests by get parameters
+	config.filters = GETParams;
+	
+	// Figure out if we're running the tests from a server or not
+	QUnit.isLocal = !!(location.protocol === 'file:');
+})();
+
+// Expose the API as global variables, unless an 'exports'
+// object exists, in that case we assume we're in CommonJS
+if ( typeof exports === "undefined" || typeof require === "undefined" ) {
+	extend(window, QUnit);
+	window.QUnit = QUnit;
+} else {
+	extend(exports, QUnit);
+	exports.QUnit = QUnit;
+}
+
+// define these after exposing globals to keep them in these QUnit namespace only
+extend(QUnit, {
+	config: config,
+
+	// Initialize the configuration options
+	init: function() {
+		extend(config, {
+			stats: { all: 0, bad: 0 },
+			moduleStats: { all: 0, bad: 0 },
+			started: +new Date,
+			updateRate: 1000,
+			blocking: false,
+			autostart: true,
+			autorun: false,
+			filters: [],
+			queue: [],
+			semaphore: 0
+		});
+
+		var tests = id("qunit-tests"),
+			banner = id("qunit-banner"),
+			result = id("qunit-testresult");
+
+		if ( tests ) {
+			tests.innerHTML = "";
+		}
+
+		if ( banner ) {
+			banner.className = "";
+		}
+
+		if ( result ) {
+			result.parentNode.removeChild( result );
+		}
+	},
+	
+	/**
+	 * Resets the test setup. Useful for tests that modify the DOM.
+	 * 
+	 * If jQuery is available, uses jQuery's html(), otherwise just innerHTML.
+	 */
+	reset: function() {
+		if ( window.jQuery ) {
+			jQuery( "#main, #qunit-fixture" ).html( config.fixture );
+		} else {
+			var main = id( 'main' ) || id( 'qunit-fixture' );
+			if ( main ) {
+				main.innerHTML = config.fixture;
+			}
+		}
+	},
+	
+	/**
+	 * Trigger an event on an element.
+	 *
+	 * @example triggerEvent( document.body, "click" );
+	 *
+	 * @param DOMElement elem
+	 * @param String type
+	 */
+	triggerEvent: function( elem, type, event ) {
+		if ( document.createEvent ) {
+			event = document.createEvent("MouseEvents");
+			event.initMouseEvent(type, true, true, elem.ownerDocument.defaultView,
+				0, 0, 0, 0, 0, false, false, false, false, 0, null);
+			elem.dispatchEvent( event );
+
+		} else if ( elem.fireEvent ) {
+			elem.fireEvent("on"+type);
+		}
+	},
+	
+	// Safe object type checking
+	is: function( type, obj ) {
+		return QUnit.objectType( obj ) == type;
+	},
+	
+	objectType: function( obj ) {
+		if (typeof obj === "undefined") {
+				return "undefined";
+
+		// consider: typeof null === object
+		}
+		if (obj === null) {
+				return "null";
+		}
+
+		var type = Object.prototype.toString.call( obj )
+			.match(/^\[object\s(.*)\]$/)[1] || '';
+
+		switch (type) {
+				case 'Number':
+						if (isNaN(obj)) {
+								return "nan";
+						} else {
+								return "number";
+						}
+				case 'String':
+				case 'Boolean':
+				case 'Array':
+				case 'Date':
+				case 'RegExp':
+				case 'Function':
+						return type.toLowerCase();
+		}
+		if (typeof obj === "object") {
+				return "object";
+		}
+		return undefined;
+	},
+	
+	push: function(result, actual, expected, message) {
+		var details = {
+			result: result,
+			message: message,
+			actual: actual,
+			expected: expected
+		};
+		
+		message = escapeHtml(message) || (result ? "okay" : "failed");
+		message = '<span class="test-message">' + message + "</span>";
+		expected = escapeHtml(QUnit.jsDump.parse(expected));
+		actual = escapeHtml(QUnit.jsDump.parse(actual));
+		var output = message + '<table><tr class="test-expected"><th>Expected: </th><td><pre>' + expected + '</pre></td></tr>';
+		if (actual != expected) {
+			output += '<tr class="test-actual"><th>Result: </th><td><pre>' + actual + '</pre></td></tr>';
+			output += '<tr class="test-diff"><th>Diff: </th><td><pre>' + QUnit.diff(expected, actual) +'</pre></td></tr>';
+		}
+		if (!result) {
+			var source = sourceFromStacktrace();
+			if (source) {
+				details.source = source;
+				output += '<tr class="test-source"><th>Source: </th><td><pre>' + source +'</pre></td></tr>';
+			}
+		}
+		output += "</table>";
+		
+		QUnit.log(details);
+		
+		config.current.assertions.push({
+			result: !!result,
+			message: output
+		});
+	},
+	
+	// Logging callbacks; all receive a single argument with the listed properties
+	// run test/logs.html for any related changes
+	begin: function() {},
+	// done: { failed, passed, total, runtime }
+	done: function() {},
+	// log: { result, actual, expected, message }
+	log: function() {},
+	// testStart: { name }
+	testStart: function() {},
+	// testDone: { name, failed, passed, total }
+	testDone: function() {},
+	// moduleStart: { name }
+	moduleStart: function() {},
+	// moduleDone: { name, failed, passed, total }
+	moduleDone: function() {}
+});
+
+if ( typeof document === "undefined" || document.readyState === "complete" ) {
+	config.autorun = true;
+}
+
+addEvent(window, "load", function() {
+	QUnit.begin({});
+	
+	// Initialize the config, saving the execution queue
+	var oldconfig = extend({}, config);
+	QUnit.init();
+	extend(config, oldconfig);
+
+	config.blocking = false;
+
+	var userAgent = id("qunit-userAgent");
+	if ( userAgent ) {
+		userAgent.innerHTML = navigator.userAgent;
+	}
+	var banner = id("qunit-header");
+	if ( banner ) {
+		var paramsIndex = location.href.lastIndexOf(location.search);
+		if ( paramsIndex > -1 ) {
+			var mainPageLocation = location.href.slice(0, paramsIndex);
+			if ( mainPageLocation == location.href ) {
+				banner.innerHTML = '<a href=""> ' + banner.innerHTML + '</a> ';
+			} else {
+				var testName = decodeURIComponent(location.search.slice(1));
+				banner.innerHTML = '<a href="' + mainPageLocation + '">' + banner.innerHTML + '</a> &#8250; <a href="">' + testName + '</a>';
+			}
+		}
+	}
+	
+	var toolbar = id("qunit-testrunner-toolbar");
+	if ( toolbar ) {
+		var filter = document.createElement("input");
+		filter.type = "checkbox";
+		filter.id = "qunit-filter-pass";
+		addEvent( filter, "click", function() {
+			var li = document.getElementsByTagName("li");
+			for ( var i = 0; i < li.length; i++ ) {
+				if ( li[i].className.indexOf("pass") > -1 ) {
+					li[i].style.display = filter.checked ? "none" : "";
+				}
+			}
+			if ( defined.sessionStorage ) {
+				sessionStorage.setItem("qunit-filter-passed-tests", filter.checked ? "true" : "");
+			}
+		});
+		if ( defined.sessionStorage && sessionStorage.getItem("qunit-filter-passed-tests") ) {
+			filter.checked = true;
+		}
+		toolbar.appendChild( filter );
+
+		var label = document.createElement("label");
+		label.setAttribute("for", "qunit-filter-pass");
+		label.innerHTML = "Hide passed tests";
+		toolbar.appendChild( label );
+	}
+
+	var main = id('main') || id('qunit-fixture');
+	if ( main ) {
+		config.fixture = main.innerHTML;
+	}
+
+	if (config.autostart) {
+		QUnit.start();
+	}
+});
+
+function done() {
+	config.autorun = true;
+
+	// Log the last module results
+	if ( config.currentModule ) {
+		QUnit.moduleDone( {
+			name: config.currentModule,
+			failed: config.moduleStats.bad,
+			passed: config.moduleStats.all - config.moduleStats.bad,
+			total: config.moduleStats.all
+		} );
+	}
+
+	var banner = id("qunit-banner"),
+		tests = id("qunit-tests"),
+		runtime = +new Date - config.started,
+		passed = config.stats.all - config.stats.bad,
+		html = [
+			'Tests completed in ',
+			runtime,
+			' milliseconds.<br/>',
+			'<span class="passed">',
+			passed,
+			'</span> tests of <span class="total">',
+			config.stats.all,
+			'</span> passed, <span class="failed">',
+			config.stats.bad,
+			'</span> failed.'
+		].join('');
+
+	if ( banner ) {
+		banner.className = (config.stats.bad ? "qunit-fail" : "qunit-pass");
+	}
+
+	if ( tests ) {	
+		var result = id("qunit-testresult");
+
+		if ( !result ) {
+			result = document.createElement("p");
+			result.id = "qunit-testresult";
+			result.className = "result";
+			tests.parentNode.insertBefore( result, tests.nextSibling );
+		}
+
+		result.innerHTML = html;
+	}
+
+	QUnit.done( {
+		failed: config.stats.bad,
+		passed: passed, 
+		total: config.stats.all,
+		runtime: runtime
+	} );
+}
+
+function validTest( name ) {
+	var i = config.filters.length,
+		run = false;
+
+	if ( !i ) {
+		return true;
+	}
+	
+	while ( i-- ) {
+		var filter = config.filters[i],
+			not = filter.charAt(0) == '!';
+
+		if ( not ) {
+			filter = filter.slice(1);
+		}
+
+		if ( name.indexOf(filter) !== -1 ) {
+			return !not;
+		}
+
+		if ( not ) {
+			run = true;
+		}
+	}
+
+	return run;
+}
+
+// so far supports only Firefox, Chrome and Opera (buggy)
+// could be extended in the future to use something like https://github.com/csnover/TraceKit
+function sourceFromStacktrace() {
+	try {
+		throw new Error();
+	} catch ( e ) {
+		if (e.stacktrace) {
+			// Opera
+			return e.stacktrace.split("\n")[6];
+		} else if (e.stack) {
+			// Firefox, Chrome
+			return e.stack.split("\n")[4];
+		}
+	}
+}
+
+function resultDisplayStyle(passed) {
+	return passed && id("qunit-filter-pass") && id("qunit-filter-pass").checked ? 'none' : '';
+}
+
+function escapeHtml(s) {
+	if (!s) {
+		return "";
+	}
+	s = s + "";
+	return s.replace(/[\&"<>\\]/g, function(s) {
+		switch(s) {
+			case "&": return "&amp;";
+			case "\\": return "\\\\";
+			case '"': return '\"';
+			case "<": return "&lt;";
+			case ">": return "&gt;";
+			default: return s;
+		}
+	});
+}
+
+function synchronize( callback ) {
+	config.queue.push( callback );
+
+	if ( config.autorun && !config.blocking ) {
+		process();
+	}
+}
+
+function process() {
+	var start = (new Date()).getTime();
+
+	while ( config.queue.length && !config.blocking ) {
+		if ( config.updateRate <= 0 || (((new Date()).getTime() - start) < config.updateRate) ) {
+			config.queue.shift()();
+		} else {
+			window.setTimeout( process, 13 );
+			break;
+		}
+	}
+  if (!config.blocking && !config.queue.length) {
+    done();
+  }
+}
+
+function saveGlobal() {
+	config.pollution = [];
+	
+	if ( config.noglobals ) {
+		for ( var key in window ) {
+			config.pollution.push( key );
+		}
+	}
+}
+
+function checkPollution( name ) {
+	var old = config.pollution;
+	saveGlobal();
+	
+	var newGlobals = diff( old, config.pollution );
+	if ( newGlobals.length > 0 ) {
+		ok( false, "Introduced global variable(s): " + newGlobals.join(", ") );
+		config.current.expected++;
+	}
+
+	var deletedGlobals = diff( config.pollution, old );
+	if ( deletedGlobals.length > 0 ) {
+		ok( false, "Deleted global variable(s): " + deletedGlobals.join(", ") );
+		config.current.expected++;
+	}
+}
+
+// returns a new Array with the elements that are in a but not in b
+function diff( a, b ) {
+	var result = a.slice();
+	for ( var i = 0; i < result.length; i++ ) {
+		for ( var j = 0; j < b.length; j++ ) {
+			if ( result[i] === b[j] ) {
+				result.splice(i, 1);
+				i--;
+				break;
+			}
+		}
+	}
+	return result;
+}
+
+function fail(message, exception, callback) {
+	if ( typeof console !== "undefined" && console.error && console.warn ) {
+		console.error(message);
+		console.error(exception);
+		console.warn(callback.toString());
+
+	} else if ( window.opera && opera.postError ) {
+		opera.postError(message, exception, callback.toString);
+	}
+}
+
+function extend(a, b) {
+	for ( var prop in b ) {
+		a[prop] = b[prop];
+	}
+
+	return a;
+}
+
+function addEvent(elem, type, fn) {
+	if ( elem.addEventListener ) {
+		elem.addEventListener( type, fn, false );
+	} else if ( elem.attachEvent ) {
+		elem.attachEvent( "on" + type, fn );
+	} else {
+		fn();
+	}
+}
+
+function id(name) {
+	return !!(typeof document !== "undefined" && document && document.getElementById) &&
+		document.getElementById( name );
+}
+
+// Test for equality any JavaScript type.
+// Discussions and reference: http://philrathe.com/articles/equiv
+// Test suites: http://philrathe.com/tests/equiv
+// Author: Philippe Rathé <prathe@gmail.com>
+QUnit.equiv = function () {
+
+    var innerEquiv; // the real equiv function
+    var callers = []; // stack to decide between skip/abort functions
+    var parents = []; // stack to avoiding loops from circular referencing
+
+    // Call the o related callback with the given arguments.
+    function bindCallbacks(o, callbacks, args) {
+        var prop = QUnit.objectType(o);
+        if (prop) {
+            if (QUnit.objectType(callbacks[prop]) === "function") {
+                return callbacks[prop].apply(callbacks, args);
+            } else {
+                return callbacks[prop]; // or undefined
+            }
+        }
+    }
+    
+    var callbacks = function () {
+
+        // for string, boolean, number and null
+        function useStrictEquality(b, a) {
+            if (b instanceof a.constructor || a instanceof b.constructor) {
+                // to catch short annotaion VS 'new' annotation of a declaration
+                // e.g. var i = 1;
+                //      var j = new Number(1);
+                return a == b;
+            } else {
+                return a === b;
+            }
+        }
+
+        return {
+            "string": useStrictEquality,
+            "boolean": useStrictEquality,
+            "number": useStrictEquality,
+            "null": useStrictEquality,
+            "undefined": useStrictEquality,
+
+            "nan": function (b) {
+                return isNaN(b);
+            },
+
+            "date": function (b, a) {
+                return QUnit.objectType(b) === "date" && a.valueOf() === b.valueOf();
+            },
+
+            "regexp": function (b, a) {
+                return QUnit.objectType(b) === "regexp" &&
+                    a.source === b.source && // the regex itself
+                    a.global === b.global && // and its modifers (gmi) ...
+                    a.ignoreCase === b.ignoreCase &&
+                    a.multiline === b.multiline;
+            },
+
+            // - skip when the property is a method of an instance (OOP)
+            // - abort otherwise,
+            //   initial === would have catch identical references anyway
+            "function": function () {
+                var caller = callers[callers.length - 1];
+                return caller !== Object &&
+                        typeof caller !== "undefined";
+            },
+
+            "array": function (b, a) {
+                var i, j, loop;
+                var len;
+
+                // b could be an object literal here
+                if ( ! (QUnit.objectType(b) === "array")) {
+                    return false;
+                }   
+                
+                len = a.length;
+                if (len !== b.length) { // safe and faster
+                    return false;
+                }
+                
+                //track reference to avoid circular references
+                parents.push(a);
+                for (i = 0; i < len; i++) {
+                    loop = false;
+                    for(j=0;j<parents.length;j++){
+                        if(parents[j] === a[i]){
+                            loop = true;//dont rewalk array
+                        }
+                    }
+                    if (!loop && ! innerEquiv(a[i], b[i])) {
+                        parents.pop();
+                        return false;
+                    }
+                }
+                parents.pop();
+                return true;
+            },
+
+            "object": function (b, a) {
+                var i, j, loop;
+                var eq = true; // unless we can proove it
+                var aProperties = [], bProperties = []; // collection of strings
+
+                // comparing constructors is more strict than using instanceof
+                if ( a.constructor !== b.constructor) {
+                    return false;
+                }
+
+                // stack constructor before traversing properties
+                callers.push(a.constructor);
+                //track reference to avoid circular references
+                parents.push(a);
+                
+                for (i in a) { // be strict: don't ensures hasOwnProperty and go deep
+                    loop = false;
+                    for(j=0;j<parents.length;j++){
+                        if(parents[j] === a[i])
+                            loop = true; //don't go down the same path twice
+                    }
+                    aProperties.push(i); // collect a's properties
+
+                    if (!loop && ! innerEquiv(a[i], b[i])) {
+                        eq = false;
+                        break;
+                    }
+                }
+
+                callers.pop(); // unstack, we are done
+                parents.pop();
+
+                for (i in b) {
+                    bProperties.push(i); // collect b's properties
+                }
+
+                // Ensures identical properties name
+                return eq && innerEquiv(aProperties.sort(), bProperties.sort());
+            }
+        };
+    }();
+
+    innerEquiv = function () { // can take multiple arguments
+        var args = Array.prototype.slice.apply(arguments);
+        if (args.length < 2) {
+            return true; // end transition
+        }
+
+        return (function (a, b) {
+            if (a === b) {
+                return true; // catch the most you can
+            } else if (a === null || b === null || typeof a === "undefined" || typeof b === "undefined" || QUnit.objectType(a) !== QUnit.objectType(b)) {
+                return false; // don't lose time with error prone cases
+            } else {
+                return bindCallbacks(a, callbacks, [b, a]);
+            }
+
+        // apply transition with (1..n) arguments
+        })(args[0], args[1]) && arguments.callee.apply(this, args.splice(1, args.length -1));
+    };
+
+    return innerEquiv;
+
+}();
+
+/**
+ * jsDump
+ * Copyright (c) 2008 Ariel Flesler - aflesler(at)gmail(dot)com | http://flesler.blogspot.com
+ * Licensed under BSD (http://www.opensource.org/licenses/bsd-license.php)
+ * Date: 5/15/2008
+ * @projectDescription Advanced and extensible data dumping for Javascript.
+ * @version 1.0.0
+ * @author Ariel Flesler
+ * @link {http://flesler.blogspot.com/2008/05/jsdump-pretty-dump-of-any-javascript.html}
+ */
+QUnit.jsDump = (function() {
+	function quote( str ) {
+		return '"' + str.toString().replace(/"/g, '\\"') + '"';
+	};
+	function literal( o ) {
+		return o + '';	
+	};
+	function join( pre, arr, post ) {
+		var s = jsDump.separator(),
+			base = jsDump.indent(),
+			inner = jsDump.indent(1);
+		if ( arr.join )
+			arr = arr.join( ',' + s + inner );
+		if ( !arr )
+			return pre + post;
+		return [ pre, inner + arr, base + post ].join(s);
+	};
+	function array( arr ) {
+		var i = arr.length,	ret = Array(i);					
+		this.up();
+		while ( i-- )
+			ret[i] = this.parse( arr[i] );				
+		this.down();
+		return join( '[', ret, ']' );
+	};
+	
+	var reName = /^function (\w+)/;
+	
+	var jsDump = {
+		parse:function( obj, type ) { //type is used mostly internally, you can fix a (custom)type in advance
+			var	parser = this.parsers[ type || this.typeOf(obj) ];
+			type = typeof parser;			
+			
+			return type == 'function' ? parser.call( this, obj ) :
+				   type == 'string' ? parser :
+				   this.parsers.error;
+		},
+		typeOf:function( obj ) {
+			var type;
+			if ( obj === null ) {
+				type = "null";
+			} else if (typeof obj === "undefined") {
+				type = "undefined";
+			} else if (QUnit.is("RegExp", obj)) {
+				type = "regexp";
+			} else if (QUnit.is("Date", obj)) {
+				type = "date";
+			} else if (QUnit.is("Function", obj)) {
+				type = "function";
+			} else if (typeof obj.setInterval !== undefined && typeof obj.document !== "undefined" && typeof obj.nodeType === "undefined") {
+				type = "window";
+			} else if (obj.nodeType === 9) {
+				type = "document";
+			} else if (obj.nodeType) {
+				type = "node";
+			} else if (typeof obj === "object" && typeof obj.length === "number" && obj.length >= 0) {
+				type = "array";
+			} else {
+				type = typeof obj;
+			}
+			return type;
+		},
+		separator:function() {
+			return this.multiline ?	this.HTML ? '<br />' : '\n' : this.HTML ? '&nbsp;' : ' ';
+		},
+		indent:function( extra ) {// extra can be a number, shortcut for increasing-calling-decreasing
+			if ( !this.multiline )
+				return '';
+			var chr = this.indentChar;
+			if ( this.HTML )
+				chr = chr.replace(/\t/g,'   ').replace(/ /g,'&nbsp;');
+			return Array( this._depth_ + (extra||0) ).join(chr);
+		},
+		up:function( a ) {
+			this._depth_ += a || 1;
+		},
+		down:function( a ) {
+			this._depth_ -= a || 1;
+		},
+		setParser:function( name, parser ) {
+			this.parsers[name] = parser;
+		},
+		// The next 3 are exposed so you can use them
+		quote:quote, 
+		literal:literal,
+		join:join,
+		//
+		_depth_: 1,
+		// This is the list of parsers, to modify them, use jsDump.setParser
+		parsers:{
+			window: '[Window]',
+			document: '[Document]',
+			error:'[ERROR]', //when no parser is found, shouldn't happen
+			unknown: '[Unknown]',
+			'null':'null',
+			undefined:'undefined',
+			'function':function( fn ) {
+				var ret = 'function',
+					name = 'name' in fn ? fn.name : (reName.exec(fn)||[])[1];//functions never have name in IE
+				if ( name )
+					ret += ' ' + name;
+				ret += '(';
+				
+				ret = [ ret, QUnit.jsDump.parse( fn, 'functionArgs' ), '){'].join('');
+				return join( ret, QUnit.jsDump.parse(fn,'functionCode'), '}' );
+			},
+			array: array,
+			nodelist: array,
+			arguments: array,
+			object:function( map ) {
+				var ret = [ ];
+				QUnit.jsDump.up();
+				for ( var key in map )
+					ret.push( QUnit.jsDump.parse(key,'key') + ': ' + QUnit.jsDump.parse(map[key]) );
+				QUnit.jsDump.down();
+				return join( '{', ret, '}' );
+			},
+			node:function( node ) {
+				var open = QUnit.jsDump.HTML ? '&lt;' : '<',
+					close = QUnit.jsDump.HTML ? '&gt;' : '>';
+					
+				var tag = node.nodeName.toLowerCase(),
+					ret = open + tag;
+					
+				for ( var a in QUnit.jsDump.DOMAttrs ) {
+					var val = node[QUnit.jsDump.DOMAttrs[a]];
+					if ( val )
+						ret += ' ' + a + '=' + QUnit.jsDump.parse( val, 'attribute' );
+				}
+				return ret + close + open + '/' + tag + close;
+			},
+			functionArgs:function( fn ) {//function calls it internally, it's the arguments part of the function
+				var l = fn.length;
+				if ( !l ) return '';				
+				
+				var args = Array(l);
+				while ( l-- )
+					args[l] = String.fromCharCode(97+l);//97 is 'a'
+				return ' ' + args.join(', ') + ' ';
+			},
+			key:quote, //object calls it internally, the key part of an item in a map
+			functionCode:'[code]', //function calls it internally, it's the content of the function
+			attribute:quote, //node calls it internally, it's an html attribute value
+			string:quote,
+			date:quote,
+			regexp:literal, //regex
+			number:literal,
+			'boolean':literal
+		},
+		DOMAttrs:{//attributes to dump from nodes, name=>realName
+			id:'id',
+			name:'name',
+			'class':'className'
+		},
+		HTML:false,//if true, entities are escaped ( <, >, \t, space and \n )
+		indentChar:'  ',//indentation unit
+		multiline:true //if true, items in a collection, are separated by a \n, else just a space.
+	};
+
+	return jsDump;
+})();
+
+// from Sizzle.js
+function getText( elems ) {
+	var ret = "", elem;
+
+	for ( var i = 0; elems[i]; i++ ) {
+		elem = elems[i];
+
+		// Get the text from text nodes and CDATA nodes
+		if ( elem.nodeType === 3 || elem.nodeType === 4 ) {
+			ret += elem.nodeValue;
+
+		// Traverse everything else, except comment nodes
+		} else if ( elem.nodeType !== 8 ) {
+			ret += getText( elem.childNodes );
+		}
+	}
+
+	return ret;
+};
+
+/*
+ * Javascript Diff Algorithm
+ *  By John Resig (http://ejohn.org/)
+ *  Modified by Chu Alan "sprite"
+ *
+ * Released under the MIT license.
+ *
+ * More Info:
+ *  http://ejohn.org/projects/javascript-diff-algorithm/
+ *  
+ * Usage: QUnit.diff(expected, actual)
+ * 
+ * QUnit.diff("the quick brown fox jumped over", "the quick fox jumps over") == "the  quick <del>brown </del> fox <del>jumped </del><ins>jumps </ins> over"
+ */
+QUnit.diff = (function() {
+	function diff(o, n){
+		var ns = new Object();
+		var os = new Object();
+		
+		for (var i = 0; i < n.length; i++) {
+			if (ns[n[i]] == null) 
+				ns[n[i]] = {
+					rows: new Array(),
+					o: null
+				};
+			ns[n[i]].rows.push(i);
+		}
+		
+		for (var i = 0; i < o.length; i++) {
+			if (os[o[i]] == null) 
+				os[o[i]] = {
+					rows: new Array(),
+					n: null
+				};
+			os[o[i]].rows.push(i);
+		}
+		
+		for (var i in ns) {
+			if (ns[i].rows.length == 1 && typeof(os[i]) != "undefined" && os[i].rows.length == 1) {
+				n[ns[i].rows[0]] = {
+					text: n[ns[i].rows[0]],
+					row: os[i].rows[0]
+				};
+				o[os[i].rows[0]] = {
+					text: o[os[i].rows[0]],
+					row: ns[i].rows[0]
+				};
+			}
+		}
+		
+		for (var i = 0; i < n.length - 1; i++) {
+			if (n[i].text != null && n[i + 1].text == null && n[i].row + 1 < o.length && o[n[i].row + 1].text == null &&
+			n[i + 1] == o[n[i].row + 1]) {
+				n[i + 1] = {
+					text: n[i + 1],
+					row: n[i].row + 1
+				};
+				o[n[i].row + 1] = {
+					text: o[n[i].row + 1],
+					row: i + 1
+				};
+			}
+		}
+		
+		for (var i = n.length - 1; i > 0; i--) {
+			if (n[i].text != null && n[i - 1].text == null && n[i].row > 0 && o[n[i].row - 1].text == null &&
+			n[i - 1] == o[n[i].row - 1]) {
+				n[i - 1] = {
+					text: n[i - 1],
+					row: n[i].row - 1
+				};
+				o[n[i].row - 1] = {
+					text: o[n[i].row - 1],
+					row: i - 1
+				};
+			}
+		}
+		
+		return {
+			o: o,
+			n: n
+		};
+	}
+	
+	return function(o, n){
+		o = o.replace(/\s+$/, '');
+		n = n.replace(/\s+$/, '');
+		var out = diff(o == "" ? [] : o.split(/\s+/), n == "" ? [] : n.split(/\s+/));
+
+		var str = "";
+		
+		var oSpace = o.match(/\s+/g);
+		if (oSpace == null) {
+			oSpace = [" "];
+		}
+		else {
+			oSpace.push(" ");
+		}
+		var nSpace = n.match(/\s+/g);
+		if (nSpace == null) {
+			nSpace = [" "];
+		}
+		else {
+			nSpace.push(" ");
+		}
+		
+		if (out.n.length == 0) {
+			for (var i = 0; i < out.o.length; i++) {
+				str += '<del>' + out.o[i] + oSpace[i] + "</del>";
+			}
+		}
+		else {
+			if (out.n[0].text == null) {
+				for (n = 0; n < out.o.length && out.o[n].text == null; n++) {
+					str += '<del>' + out.o[n] + oSpace[n] + "</del>";
+				}
+			}
+			
+			for (var i = 0; i < out.n.length; i++) {
+				if (out.n[i].text == null) {
+					str += '<ins>' + out.n[i] + nSpace[i] + "</ins>";
+				}
+				else {
+					var pre = "";
+					
+					for (n = out.n[i].row + 1; n < out.o.length && out.o[n].text == null; n++) {
+						pre += '<del>' + out.o[n] + oSpace[n] + "</del>";
+					}
+					str += " " + out.n[i].text + nSpace[i] + pre;
+				}
+			}
+		}
+		
+		return str;
+	};
+})();
+
+})(this);
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/qunit.js
+
+
+__jah__.resources["/libs/cocos2d/libs/JXGUtil.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*
+    Copyright 2008,2009
+        Matthias Ehmann,
+        Michael Gerhaeuser,
+        Carsten Miller,
+        Bianca Valentin,
+        Alfred Wassermann,
+        Peter Wilfahrt
+
+    This file is part of JSXGraph.
+
+    JSXGraph is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    JSXGraph is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with JSXGraph.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+/**
+ * @fileoverview Utilities for uncompressing and base64 decoding
+ */
 
 /** @namespace */
-var base64 = {
-    /**
-     * Decode a base64 encoded string into a binary string
-     *
-     * @param {String} input Base64 encoded data
-     * @returns {String} Binary string
-     */
-    decode: function(input) {
-        return JXG.Util.Base64.decode(input);
+var JXG = {};
+
+/**
+  * @class Util class
+  * Class for gunzipping, unzipping and base64 decoding of files.
+  * It is used for reading GEONExT, Geogebra and Intergeo files.
+  *
+  * Only Huffman codes are decoded in gunzip.
+  * The code is based on the source code for gunzip.c by Pasi Ojala 
+  * @see <a href="http://www.cs.tut.fi/~albert/Dev/gunzip/gunzip.c">http://www.cs.tut.fi/~albert/Dev/gunzip/gunzip.c</a>
+  * @see <a href="http://www.cs.tut.fi/~albert">http://www.cs.tut.fi/~albert</a>
+  */
+JXG.Util = {};
+                                 
+/**
+ * Unzip zip files
+ */
+JXG.Util.Unzip = function (barray){
+    var outputArr = [],
+        output = "",
+        debug = false,
+        gpflags,
+        files = 0,
+        unzipped = [],
+        crc,
+        buf32k = new Array(32768),
+        bIdx = 0,
+        modeZIP=false,
+
+        CRC, SIZE,
+    
+        bitReverse = [
+        0x00, 0x80, 0x40, 0xc0, 0x20, 0xa0, 0x60, 0xe0,
+        0x10, 0x90, 0x50, 0xd0, 0x30, 0xb0, 0x70, 0xf0,
+        0x08, 0x88, 0x48, 0xc8, 0x28, 0xa8, 0x68, 0xe8,
+        0x18, 0x98, 0x58, 0xd8, 0x38, 0xb8, 0x78, 0xf8,
+        0x04, 0x84, 0x44, 0xc4, 0x24, 0xa4, 0x64, 0xe4,
+        0x14, 0x94, 0x54, 0xd4, 0x34, 0xb4, 0x74, 0xf4,
+        0x0c, 0x8c, 0x4c, 0xcc, 0x2c, 0xac, 0x6c, 0xec,
+        0x1c, 0x9c, 0x5c, 0xdc, 0x3c, 0xbc, 0x7c, 0xfc,
+        0x02, 0x82, 0x42, 0xc2, 0x22, 0xa2, 0x62, 0xe2,
+        0x12, 0x92, 0x52, 0xd2, 0x32, 0xb2, 0x72, 0xf2,
+        0x0a, 0x8a, 0x4a, 0xca, 0x2a, 0xaa, 0x6a, 0xea,
+        0x1a, 0x9a, 0x5a, 0xda, 0x3a, 0xba, 0x7a, 0xfa,
+        0x06, 0x86, 0x46, 0xc6, 0x26, 0xa6, 0x66, 0xe6,
+        0x16, 0x96, 0x56, 0xd6, 0x36, 0xb6, 0x76, 0xf6,
+        0x0e, 0x8e, 0x4e, 0xce, 0x2e, 0xae, 0x6e, 0xee,
+        0x1e, 0x9e, 0x5e, 0xde, 0x3e, 0xbe, 0x7e, 0xfe,
+        0x01, 0x81, 0x41, 0xc1, 0x21, 0xa1, 0x61, 0xe1,
+        0x11, 0x91, 0x51, 0xd1, 0x31, 0xb1, 0x71, 0xf1,
+        0x09, 0x89, 0x49, 0xc9, 0x29, 0xa9, 0x69, 0xe9,
+        0x19, 0x99, 0x59, 0xd9, 0x39, 0xb9, 0x79, 0xf9,
+        0x05, 0x85, 0x45, 0xc5, 0x25, 0xa5, 0x65, 0xe5,
+        0x15, 0x95, 0x55, 0xd5, 0x35, 0xb5, 0x75, 0xf5,
+        0x0d, 0x8d, 0x4d, 0xcd, 0x2d, 0xad, 0x6d, 0xed,
+        0x1d, 0x9d, 0x5d, 0xdd, 0x3d, 0xbd, 0x7d, 0xfd,
+        0x03, 0x83, 0x43, 0xc3, 0x23, 0xa3, 0x63, 0xe3,
+        0x13, 0x93, 0x53, 0xd3, 0x33, 0xb3, 0x73, 0xf3,
+        0x0b, 0x8b, 0x4b, 0xcb, 0x2b, 0xab, 0x6b, 0xeb,
+        0x1b, 0x9b, 0x5b, 0xdb, 0x3b, 0xbb, 0x7b, 0xfb,
+        0x07, 0x87, 0x47, 0xc7, 0x27, 0xa7, 0x67, 0xe7,
+        0x17, 0x97, 0x57, 0xd7, 0x37, 0xb7, 0x77, 0xf7,
+        0x0f, 0x8f, 0x4f, 0xcf, 0x2f, 0xaf, 0x6f, 0xef,
+        0x1f, 0x9f, 0x5f, 0xdf, 0x3f, 0xbf, 0x7f, 0xff
+    ],
+    
+    cplens = [
+        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31,
+        35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258, 0, 0
+    ],
+
+    cplext = [
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2,
+        3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0, 99, 99
+    ], /* 99==invalid */
+
+    cpdist = [
+        0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0007, 0x0009, 0x000d,
+        0x0011, 0x0019, 0x0021, 0x0031, 0x0041, 0x0061, 0x0081, 0x00c1,
+        0x0101, 0x0181, 0x0201, 0x0301, 0x0401, 0x0601, 0x0801, 0x0c01,
+        0x1001, 0x1801, 0x2001, 0x3001, 0x4001, 0x6001
+    ],
+
+    cpdext = [
+        0,  0,  0,  0,  1,  1,  2,  2,
+        3,  3,  4,  4,  5,  5,  6,  6,
+        7,  7,  8,  8,  9,  9, 10, 10,
+        11, 11, 12, 12, 13, 13
+    ],
+    
+    border = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15],
+    
+    bA = barray,
+
+    bytepos=0,
+    bitpos=0,
+    bb = 1,
+    bits=0,
+    
+    NAMEMAX = 256,
+    
+    nameBuf = [],
+    
+    fileout;
+    
+    function readByte(){
+        bits+=8;
+        if (bytepos<bA.length){
+            //if (debug)
+            //    document.write(bytepos+": "+bA[bytepos]+"<br>");
+            return bA[bytepos++];
+        } else
+            return -1;
+    };
+
+    function byteAlign(){
+        bb = 1;
+    };
+    
+    function readBit(){
+        var carry;
+        bits++;
+        carry = (bb & 1);
+        bb >>= 1;
+        if (bb==0){
+            bb = readByte();
+            carry = (bb & 1);
+            bb = (bb>>1) | 0x80;
+        }
+        return carry;
+    };
+
+    function readBits(a) {
+        var res = 0,
+            i = a;
+    
+        while(i--) {
+            res = (res<<1) | readBit();
+        }
+        if(a) {
+            res = bitReverse[res]>>(8-a);
+        }
+        return res;
+    };
+        
+    function flushBuffer(){
+        //document.write('FLUSHBUFFER:'+buf32k);
+        bIdx = 0;
+    };
+    function addBuffer(a){
+        SIZE++;
+        //CRC=updcrc(a,crc);
+        buf32k[bIdx++] = a;
+        outputArr.push(String.fromCharCode(a));
+        //output+=String.fromCharCode(a);
+        if(bIdx==0x8000){
+            //document.write('ADDBUFFER:'+buf32k);
+            bIdx=0;
+        }
+    };
+    
+    function HufNode() {
+        this.b0=0;
+        this.b1=0;
+        this.jump = null;
+        this.jumppos = -1;
+    };
+
+    var LITERALS = 288;
+    
+    var literalTree = new Array(LITERALS);
+    var distanceTree = new Array(32);
+    var treepos=0;
+    var Places = null;
+    var Places2 = null;
+    
+    var impDistanceTree = new Array(64);
+    var impLengthTree = new Array(64);
+    
+    var len = 0;
+    var fpos = new Array(17);
+    fpos[0]=0;
+    var flens;
+    var fmax;
+    
+    function IsPat() {
+        while (1) {
+            if (fpos[len] >= fmax)
+                return -1;
+            if (flens[fpos[len]] == len)
+                return fpos[len]++;
+            fpos[len]++;
+        }
+    };
+
+    function Rec() {
+        var curplace = Places[treepos];
+        var tmp;
+        if (debug)
+    		document.write("<br>len:"+len+" treepos:"+treepos);
+        if(len==17) { //war 17
+            return -1;
+        }
+        treepos++;
+        len++;
+    	
+        tmp = IsPat();
+        if (debug)
+        	document.write("<br>IsPat "+tmp);
+        if(tmp >= 0) {
+            curplace.b0 = tmp;    /* leaf cell for 0-bit */
+            if (debug)
+            	document.write("<br>b0 "+curplace.b0);
+        } else {
+        /* Not a Leaf cell */
+        curplace.b0 = 0x8000;
+        if (debug)
+        	document.write("<br>b0 "+curplace.b0);
+        if(Rec())
+            return -1;
+        }
+        tmp = IsPat();
+        if(tmp >= 0) {
+            curplace.b1 = tmp;    /* leaf cell for 1-bit */
+            if (debug)
+            	document.write("<br>b1 "+curplace.b1);
+            curplace.jump = null;    /* Just for the display routine */
+        } else {
+            /* Not a Leaf cell */
+            curplace.b1 = 0x8000;
+            if (debug)
+            	document.write("<br>b1 "+curplace.b1);
+            curplace.jump = Places[treepos];
+            curplace.jumppos = treepos;
+            if(Rec())
+                return -1;
+        }
+        len--;
+        return 0;
+    };
+
+    function CreateTree(currentTree, numval, lengths, show) {
+        var i;
+        /* Create the Huffman decode tree/table */
+        //document.write("<br>createtree<br>");
+        if (debug)
+        	document.write("currentTree "+currentTree+" numval "+numval+" lengths "+lengths+" show "+show);
+        Places = currentTree;
+        treepos=0;
+        flens = lengths;
+        fmax  = numval;
+        for (i=0;i<17;i++)
+            fpos[i] = 0;
+        len = 0;
+        if(Rec()) {
+            //fprintf(stderr, "invalid huffman tree\n");
+            if (debug)
+            	alert("invalid huffman tree\n");
+            return -1;
+        }
+        if (debug){
+        	document.write('<br>Tree: '+Places.length);
+        	for (var a=0;a<32;a++){
+            	document.write("Places["+a+"].b0="+Places[a].b0+"<br>");
+            	document.write("Places["+a+"].b1="+Places[a].b1+"<br>");
+        	}
+        }
+
+        return 0;
+    };
+    
+    function DecodeValue(currentTree) {
+        var len, i,
+            xtreepos=0,
+            X = currentTree[xtreepos],
+            b;
+
+        /* decode one symbol of the data */
+        while(1) {
+            b=readBit();
+            if (debug)
+            	document.write("b="+b);
+            if(b) {
+                if(!(X.b1 & 0x8000)){
+                	if (debug)
+                    	document.write("ret1");
+                    return X.b1;    /* If leaf node, return data */
+                }
+                X = X.jump;
+                len = currentTree.length;
+                for (i=0;i<len;i++){
+                    if (currentTree[i]===X){
+                        xtreepos=i;
+                        break;
+                    }
+                }
+                //xtreepos++;
+            } else {
+                if(!(X.b0 & 0x8000)){
+                	if (debug)
+                    	document.write("ret2");
+                    return X.b0;    /* If leaf node, return data */
+                }
+                //X++; //??????????????????
+                xtreepos++;
+                X = currentTree[xtreepos];
+            }
+        }
+        if (debug)
+        	document.write("ret3");
+        return -1;
+    };
+    
+    function DeflateLoop() {
+    var last, c, type, i, len;
+
+    do {
+        /*if((last = readBit())){
+            fprintf(errfp, "Last Block: ");
+        } else {
+            fprintf(errfp, "Not Last Block: ");
+        }*/
+        last = readBit();
+        type = readBits(2);
+        switch(type) {
+            case 0:
+            	if (debug)
+                	alert("Stored\n");
+                break;
+            case 1:
+            	if (debug)
+                	alert("Fixed Huffman codes\n");
+                break;
+            case 2:
+            	if (debug)
+                	alert("Dynamic Huffman codes\n");
+                break;
+            case 3:
+            	if (debug)
+                	alert("Reserved block type!!\n");
+                break;
+            default:
+            	if (debug)
+                	alert("Unexpected value %d!\n", type);
+                break;
+        }
+
+        if(type==0) {
+            var blockLen, cSum;
+
+            // Stored 
+            byteAlign();
+            blockLen = readByte();
+            blockLen |= (readByte()<<8);
+
+            cSum = readByte();
+            cSum |= (readByte()<<8);
+
+            if(((blockLen ^ ~cSum) & 0xffff)) {
+                document.write("BlockLen checksum mismatch\n");
+            }
+            while(blockLen--) {
+                c = readByte();
+                addBuffer(c);
+            }
+        } else if(type==1) {
+            var j;
+
+            /* Fixed Huffman tables -- fixed decode routine */
+            while(1) {
+            /*
+                256    0000000        0
+                :   :     :
+                279    0010111        23
+                0   00110000    48
+                :    :      :
+                143    10111111    191
+                280 11000000    192
+                :    :      :
+                287 11000111    199
+                144    110010000    400
+                :    :       :
+                255    111111111    511
+    
+                Note the bit order!
+                */
+
+            j = (bitReverse[readBits(7)]>>1);
+            if(j > 23) {
+                j = (j<<1) | readBit();    /* 48..255 */
+
+                if(j > 199) {    /* 200..255 */
+                    j -= 128;    /*  72..127 */
+                    j = (j<<1) | readBit();        /* 144..255 << */
+                } else {        /*  48..199 */
+                    j -= 48;    /*   0..151 */
+                    if(j > 143) {
+                        j = j+136;    /* 280..287 << */
+                        /*   0..143 << */
+                    }
+                }
+            } else {    /*   0..23 */
+                j += 256;    /* 256..279 << */
+            }
+            if(j < 256) {
+                addBuffer(j);
+                //document.write("out:"+String.fromCharCode(j));
+                /*fprintf(errfp, "@%d %02x\n", SIZE, j);*/
+            } else if(j == 256) {
+                /* EOF */
+                break;
+            } else {
+                var len, dist;
+
+                j -= 256 + 1;    /* bytes + EOF */
+                len = readBits(cplext[j]) + cplens[j];
+
+                j = bitReverse[readBits(5)]>>3;
+                if(cpdext[j] > 8) {
+                    dist = readBits(8);
+                    dist |= (readBits(cpdext[j]-8)<<8);
+                } else {
+                    dist = readBits(cpdext[j]);
+                }
+                dist += cpdist[j];
+
+                /*fprintf(errfp, "@%d (l%02x,d%04x)\n", SIZE, len, dist);*/
+                for(j=0;j<len;j++) {
+                    var c = buf32k[(bIdx - dist) & 0x7fff];
+                    addBuffer(c);
+                }
+            }
+            } // while
+        } else if(type==2) {
+            var j, n, literalCodes, distCodes, lenCodes;
+            var ll = new Array(288+32);    // "static" just to preserve stack
+    
+            // Dynamic Huffman tables 
+    
+            literalCodes = 257 + readBits(5);
+            distCodes = 1 + readBits(5);
+            lenCodes = 4 + readBits(4);
+            //document.write("<br>param: "+literalCodes+" "+distCodes+" "+lenCodes+"<br>");
+            for(j=0; j<19; j++) {
+                ll[j] = 0;
+            }
+    
+            // Get the decode tree code lengths
+    
+            //document.write("<br>");
+            for(j=0; j<lenCodes; j++) {
+                ll[border[j]] = readBits(3);
+                //document.write(ll[border[j]]+" ");
+            }
+            //fprintf(errfp, "\n");
+            //document.write('<br>ll:'+ll);
+            len = distanceTree.length;
+            for (i=0; i<len; i++)
+                distanceTree[i]=new HufNode();
+            if(CreateTree(distanceTree, 19, ll, 0)) {
+                flushBuffer();
+                return 1;
+            }
+            if (debug){
+            	document.write("<br>distanceTree");
+            	for(var a=0;a<distanceTree.length;a++){
+                	document.write("<br>"+distanceTree[a].b0+" "+distanceTree[a].b1+" "+distanceTree[a].jump+" "+distanceTree[a].jumppos);
+                	/*if (distanceTree[a].jumppos!=-1)
+                    	document.write(" "+distanceTree[a].jump.b0+" "+distanceTree[a].jump.b1);
+                	*/
+            	}
+            }
+            //document.write('<BR>tree created');
+    
+            //read in literal and distance code lengths
+            n = literalCodes + distCodes;
+            i = 0;
+            var z=-1;
+            if (debug)
+            	document.write("<br>n="+n+" bits: "+bits+"<br>");
+            while(i < n) {
+                z++;
+                j = DecodeValue(distanceTree);
+                if (debug)
+                	document.write("<br>"+z+" i:"+i+" decode: "+j+"    bits "+bits+"<br>");
+                if(j<16) {    // length of code in bits (0..15)
+                       ll[i++] = j;
+                } else if(j==16) {    // repeat last length 3 to 6 times 
+                       var l;
+                    j = 3 + readBits(2);
+                    if(i+j > n) {
+                        flushBuffer();
+                        return 1;
+                    }
+                    l = i ? ll[i-1] : 0;
+                    while(j--) {
+                        ll[i++] = l;
+                    }
+                } else {
+                    if(j==17) {        // 3 to 10 zero length codes
+                        j = 3 + readBits(3);
+                    } else {        // j == 18: 11 to 138 zero length codes 
+                        j = 11 + readBits(7);
+                    }
+                    if(i+j > n) {
+                        flushBuffer();
+                        return 1;
+                    }
+                    while(j--) {
+                        ll[i++] = 0;
+                    }
+                }
+            }
+            /*for(j=0; j<literalCodes+distCodes; j++) {
+                //fprintf(errfp, "%d ", ll[j]);
+                if ((j&7)==7)
+                    fprintf(errfp, "\n");
+            }
+            fprintf(errfp, "\n");*/
+            // Can overwrite tree decode tree as it is not used anymore
+            len = literalTree.length;
+            for (i=0; i<len; i++)
+                literalTree[i]=new HufNode();
+            if(CreateTree(literalTree, literalCodes, ll, 0)) {
+                flushBuffer();
+                return 1;
+            }
+            len = literalTree.length;
+            for (i=0; i<len; i++)
+                distanceTree[i]=new HufNode();
+            var ll2 = new Array();
+            for (i=literalCodes; i <ll.length; i++){
+                ll2[i-literalCodes]=ll[i];
+            }    
+            if(CreateTree(distanceTree, distCodes, ll2, 0)) {
+                flushBuffer();
+                return 1;
+            }
+            if (debug)
+           		document.write("<br>literalTree");
+            while(1) {
+                j = DecodeValue(literalTree);
+                if(j >= 256) {        // In C64: if carry set
+                    var len, dist;
+                    j -= 256;
+                    if(j == 0) {
+                        // EOF
+                        break;
+                    }
+                    j--;
+                    len = readBits(cplext[j]) + cplens[j];
+    
+                    j = DecodeValue(distanceTree);
+                    if(cpdext[j] > 8) {
+                        dist = readBits(8);
+                        dist |= (readBits(cpdext[j]-8)<<8);
+                    } else {
+                        dist = readBits(cpdext[j]);
+                    }
+                    dist += cpdist[j];
+                    while(len--) {
+                        var c = buf32k[(bIdx - dist) & 0x7fff];
+                        addBuffer(c);
+                    }
+                } else {
+                    addBuffer(j);
+                }
+            }
+        }
+    } while(!last);
+    flushBuffer();
+
+    byteAlign();
+    return 0;
+};
+
+JXG.Util.Unzip.prototype.unzipFile = function(name) {
+    var i;
+	this.unzip();
+	//alert(unzipped[0][1]);
+	for (i=0;i<unzipped.length;i++){
+		if(unzipped[i][1]==name) {
+			return unzipped[i][0];
+		}
+	}
+	
+  };
+    
+    
+JXG.Util.Unzip.prototype.unzip = function() {
+	//convertToByteArray(input);
+	if (debug)
+		alert(bA);
+	/*for (i=0;i<bA.length*8;i++){
+		document.write(readBit());
+		if ((i+1)%8==0)
+			document.write(" ");
+	}*/
+	/*for (i=0;i<bA.length;i++){
+		document.write(readByte()+" ");
+		if ((i+1)%8==0)
+			document.write(" ");
+	}
+	for (i=0;i<bA.length;i++){
+		document.write(bA[i]+" ");
+		if ((i+1)%16==0)
+			document.write("<br>");
+	}	
+	*/
+	//alert(bA);
+	nextFile();
+	return unzipped;
+  };
+    
+ function nextFile(){
+ 	if (debug)
+ 		alert("NEXTFILE");
+ 	outputArr = [];
+ 	var tmp = [];
+ 	modeZIP = false;
+	tmp[0] = readByte();
+	tmp[1] = readByte();
+	if (debug)
+		alert("type: "+tmp[0]+" "+tmp[1]);
+	if (tmp[0] == parseInt("78",16) && tmp[1] == parseInt("da",16)){ //GZIP
+		if (debug)
+			alert("GEONExT-GZIP");
+		DeflateLoop();
+		if (debug)
+			alert(outputArr.join(''));
+		unzipped[files] = new Array(2);
+    	unzipped[files][0] = outputArr.join('');
+    	unzipped[files][1] = "geonext.gxt";
+    	files++;
+	}
+	if (tmp[0] == parseInt("1f",16) && tmp[1] == parseInt("8b",16)){ //GZIP
+		if (debug)
+			alert("GZIP");
+		//DeflateLoop();
+		skipdir();
+		if (debug)
+			alert(outputArr.join(''));
+		unzipped[files] = new Array(2);
+    	unzipped[files][0] = outputArr.join('');
+    	unzipped[files][1] = "file";
+    	files++;
+	}
+	if (tmp[0] == parseInt("50",16) && tmp[1] == parseInt("4b",16)){ //ZIP
+		modeZIP = true;
+		tmp[2] = readByte();
+		tmp[3] = readByte();
+		if (tmp[2] == parseInt("3",16) && tmp[3] == parseInt("4",16)){
+			//MODE_ZIP
+			tmp[0] = readByte();
+			tmp[1] = readByte();
+			if (debug)
+				alert("ZIP-Version: "+tmp[1]+" "+tmp[0]/10+"."+tmp[0]%10);
+			
+			gpflags = readByte();
+			gpflags |= (readByte()<<8);
+			if (debug)
+				alert("gpflags: "+gpflags);
+			
+			var method = readByte();
+			method |= (readByte()<<8);
+			if (debug)
+				alert("method: "+method);
+			
+			readByte();
+			readByte();
+			readByte();
+			readByte();
+			
+			var crc = readByte();
+			crc |= (readByte()<<8);
+			crc |= (readByte()<<16);
+			crc |= (readByte()<<24);
+			
+			var compSize = readByte();
+			compSize |= (readByte()<<8);
+			compSize |= (readByte()<<16);
+			compSize |= (readByte()<<24);
+			
+			var size = readByte();
+			size |= (readByte()<<8);
+			size |= (readByte()<<16);
+			size |= (readByte()<<24);
+			
+			if (debug)
+				alert("local CRC: "+crc+"\nlocal Size: "+size+"\nlocal CompSize: "+compSize);
+			
+			var filelen = readByte();
+			filelen |= (readByte()<<8);
+			
+			var extralen = readByte();
+			extralen |= (readByte()<<8);
+			
+			if (debug)
+				alert("filelen "+filelen);
+			i = 0;
+			nameBuf = [];
+			while (filelen--){ 
+				var c = readByte();
+				if (c == "/" | c ==":"){
+					i = 0;
+				} else if (i < NAMEMAX-1)
+					nameBuf[i++] = String.fromCharCode(c);
+			}
+			if (debug)
+				alert("nameBuf: "+nameBuf);
+			
+			//nameBuf[i] = "\0";
+			if (!fileout)
+				fileout = nameBuf;
+			
+			var i = 0;
+			while (i < extralen){
+				c = readByte();
+				i++;
+			}
+				
+			CRC = 0xffffffff;
+			SIZE = 0;
+			
+			if (size = 0 && fileOut.charAt(fileout.length-1)=="/"){
+				//skipdir
+				if (debug)
+					alert("skipdir");
+			}
+			if (method == 8){
+				DeflateLoop();
+				if (debug)
+					alert(outputArr.join(''));
+				unzipped[files] = new Array(2);
+				unzipped[files][0] = outputArr.join('');
+    			unzipped[files][1] = nameBuf.join('');
+    			files++;
+				//return outputArr.join('');
+			}
+			skipdir();
+		}
+	}
+ };
+	
+function skipdir(){
+    var crc, 
+        tmp = [],
+        compSize, size, os, i, c;
+    
+	if ((gpflags & 8)) {
+		tmp[0] = readByte();
+		tmp[1] = readByte();
+		tmp[2] = readByte();
+		tmp[3] = readByte();
+		
+		if (tmp[0] == parseInt("50",16) && 
+            tmp[1] == parseInt("4b",16) && 
+            tmp[2] == parseInt("07",16) && 
+            tmp[3] == parseInt("08",16))
+        {
+            crc = readByte();
+            crc |= (readByte()<<8);
+            crc |= (readByte()<<16);
+            crc |= (readByte()<<24);
+		} else {
+			crc = tmp[0] | (tmp[1]<<8) | (tmp[2]<<16) | (tmp[3]<<24);
+		}
+		
+		compSize = readByte();
+		compSize |= (readByte()<<8);
+		compSize |= (readByte()<<16);
+		compSize |= (readByte()<<24);
+		
+		size = readByte();
+		size |= (readByte()<<8);
+		size |= (readByte()<<16);
+		size |= (readByte()<<24);
+		
+		if (debug)
+			alert("CRC:");
+	}
+
+	if (modeZIP)
+		nextFile();
+	
+	tmp[0] = readByte();
+	if (tmp[0] != 8) {
+		if (debug)
+			alert("Unknown compression method!");
+        return 0;	
+	}
+	
+	gpflags = readByte();
+	if (debug){
+		if ((gpflags & ~(parseInt("1f",16))))
+			alert("Unknown flags set!");
+	}
+	
+	readByte();
+	readByte();
+	readByte();
+	readByte();
+	
+	readByte();
+	os = readByte();
+	
+	if ((gpflags & 4)){
+		tmp[0] = readByte();
+		tmp[2] = readByte();
+		len = tmp[0] + 256*tmp[1];
+		if (debug)
+			alert("Extra field size: "+len);
+		for (i=0;i<len;i++)
+			readByte();
+	}
+	
+	if ((gpflags & 8)){
+		i=0;
+		nameBuf=[];
+		while (c=readByte()){
+			if(c == "7" || c == ":")
+				i=0;
+			if (i<NAMEMAX-1)
+				nameBuf[i++] = c;
+		}
+		//nameBuf[i] = "\0";
+		if (debug)
+			alert("original file name: "+nameBuf);
+	}
+		
+	if ((gpflags & 16)){
+		while (c=readByte()){
+			//FILE COMMENT
+		}
+	}
+	
+	if ((gpflags & 2)){
+		readByte();
+		readByte();
+	}
+	
+	DeflateLoop();
+	
+	crc = readByte();
+	crc |= (readByte()<<8);
+	crc |= (readByte()<<16);
+	crc |= (readByte()<<24);
+	
+	size = readByte();
+	size |= (readByte()<<8);
+	size |= (readByte()<<16);
+	size |= (readByte()<<24);
+	
+	if (modeZIP)
+		nextFile();
+	
+};
+
+};
+
+/**
+*  Base64 encoding / decoding
+*  @see <a href="http://www.webtoolkit.info/">http://www.webtoolkit.info/</A>
+*/
+JXG.Util.Base64 = {
+
+    // private property
+    _keyStr : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
+
+    // public method for encoding
+    encode : function (input) {
+        var output = [],
+            chr1, chr2, chr3, enc1, enc2, enc3, enc4,
+            i = 0;
+
+        input = JXG.Util.Base64._utf8_encode(input);
+
+        while (i < input.length) {
+
+            chr1 = input.charCodeAt(i++);
+            chr2 = input.charCodeAt(i++);
+            chr3 = input.charCodeAt(i++);
+
+            enc1 = chr1 >> 2;
+            enc2 = ((chr1 & 3) << 4) | (chr2 >> 4);
+            enc3 = ((chr2 & 15) << 2) | (chr3 >> 6);
+            enc4 = chr3 & 63;
+
+            if (isNaN(chr2)) {
+                enc3 = enc4 = 64;
+            } else if (isNaN(chr3)) {
+                enc4 = 64;
+            }
+
+            output.push([this._keyStr.charAt(enc1),
+                         this._keyStr.charAt(enc2),
+                         this._keyStr.charAt(enc3),
+                         this._keyStr.charAt(enc4)].join(''));
+        }
+
+        return output.join('');
     },
 
-    /**
-     * Decode a base64 encoded string into a byte array
-     *
-     * @param {String} input Base64 encoded data
-     * @returns {Integer[]} Array of bytes
-     */
-    decodeAsArray: function(input, bytes) {
-        bytes = bytes || 1;
+    // public method for decoding
+    decode : function (input, utf8) {
+        var output = [],
+            chr1, chr2, chr3,
+            enc1, enc2, enc3, enc4,
+            i = 0;
 
-        var dec = JXG.Util.Base64.decode(input),
-            ar = [], i, j, len;
+        input = input.replace(/[^A-Za-z0-9\+\/\=]/g, "");
 
-        for (i = 0, len = dec.length/bytes; i < len; i++){
-            ar[i] = 0;
-            for (j = bytes-1; j >= 0; --j){
-                ar[i] += dec.charCodeAt((i *bytes) +j) << (j *8);
+        while (i < input.length) {
+
+            enc1 = this._keyStr.indexOf(input.charAt(i++));
+            enc2 = this._keyStr.indexOf(input.charAt(i++));
+            enc3 = this._keyStr.indexOf(input.charAt(i++));
+            enc4 = this._keyStr.indexOf(input.charAt(i++));
+
+            chr1 = (enc1 << 2) | (enc2 >> 4);
+            chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
+            chr3 = ((enc3 & 3) << 6) | enc4;
+
+            output.push(String.fromCharCode(chr1));
+
+            if (enc3 != 64) {
+                output.push(String.fromCharCode(chr2));
             }
+            if (enc4 != 64) {
+                output.push(String.fromCharCode(chr3));
+            }
+        }
+        
+        output = output.join(''); 
+        
+        if (utf8) {
+            output = JXG.Util.Base64._utf8_decode(output);
+        }
+        return output;
+
+    },
+
+    // private method for UTF-8 encoding
+    _utf8_encode : function (string) {
+        string = string.replace(/\r\n/g,"\n");
+        var utftext = "";
+
+        for (var n = 0; n < string.length; n++) {
+
+            var c = string.charCodeAt(n);
+
+            if (c < 128) {
+                utftext += String.fromCharCode(c);
+            }
+            else if((c > 127) && (c < 2048)) {
+                utftext += String.fromCharCode((c >> 6) | 192);
+                utftext += String.fromCharCode((c & 63) | 128);
+            }
+            else {
+                utftext += String.fromCharCode((c >> 12) | 224);
+                utftext += String.fromCharCode(((c >> 6) & 63) | 128);
+                utftext += String.fromCharCode((c & 63) | 128);
+            }
+
+        }
+
+        return utftext;
+    },
+
+    // private method for UTF-8 decoding
+    _utf8_decode : function (utftext) {
+        var string = [],
+            i = 0,
+            c = 0, c2 = 0, c3 = 0;
+
+        while ( i < utftext.length ) {
+            c = utftext.charCodeAt(i);
+            if (c < 128) {
+                string.push(String.fromCharCode(c));
+                i++;
+            }
+            else if((c > 191) && (c < 224)) {
+                c2 = utftext.charCodeAt(i+1);
+                string.push(String.fromCharCode(((c & 31) << 6) | (c2 & 63)));
+                i += 2;
+            }
+            else {
+                c2 = utftext.charCodeAt(i+1);
+                c3 = utftext.charCodeAt(i+2);
+                string.push(String.fromCharCode(((c & 15) << 12) | ((c2 & 63) << 6) | (c3 & 63)));
+                i += 3;
+            }
+        }
+        return string.join('');
+    },
+    
+    _destrip: function (stripped, wrap){
+        var lines = [], lineno, i,
+            destripped = [];
+        
+        if (wrap==null) 
+            wrap = 76;
+            
+        stripped.replace(/ /g, "");
+        lineno = stripped.length / wrap;
+        for (i = 0; i < lineno; i++)
+            lines[i]=stripped.substr(i * wrap, wrap);
+        if (lineno != stripped.length / wrap)
+            lines[lines.length]=stripped.substr(lineno * wrap, stripped.length-(lineno * wrap));
+            
+        for (i = 0; i < lines.length; i++)
+            destripped.push(lines[i]);
+        return destripped.join('\n');
+    },
+    
+    decodeAsArray: function (input){
+        var dec = this.decode(input),
+            ar = [], i;
+        for (i=0;i<dec.length;i++){
+            ar[i]=dec.charCodeAt(i);
         }
         return ar;
     },
-
-    /**
-     * Encode a binary string into base64
-     *
-     * @param {String} input Binary string
-     * @returns {String} Base64 encoded data
-     */
-    encode: function(input) {
-        return JXG.Util.Base64.encode(input);
-    }
-};
-
-module.exports = base64;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/base64.js
-
-
-__jah__.resources["/libs/cocos2d/libs/bobject.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    events = require('events');
-
-
-/**
- * @ignore
- */
-function getAccessors(obj) {
-    if (!obj.js_accessors_) {
-        obj.js_accessors_ = {};
-    }
-    return obj.js_accessors_;
-}
-
-/**
- * @ignore
- */
-function getBindings(obj) {
-    if (!obj.js_bindings_) {
-        obj.js_bindings_ = {};
-    }
-    return obj.js_bindings_;
-}
-
-/**
- * @ignore
- */
-function addAccessor(obj, key, target, targetKey, noNotify) {
-    getAccessors(obj)[key] = {
-        key: targetKey,
-        target: target
-    };
-
-    if (!noNotify) {
-        obj.triggerChanged(key);
-    }
-}
-
-
-/**
- * @ignore
- */
-var objectID = 0;
-
-/**
- * @class
- * A bindable object. Allows observing and binding to its properties.
- */
-function BObject () {
-    this.init.apply(this, arguments)
-}
-BObject.prototype = util.extend(BObject.prototype, /** @lends BObject# */{
-    /**
-     * Unique ID
-     * @type Integer
-     */
-    _id: 0,
     
-
-    /**
-     * The constructor for subclasses. Overwrite this for any initalisation you
-     * need to do.
-     * @ignore
-     */
-    init: function () {},
-
-    /**
-     * Get a property from the object. Always use this instead of trying to
-     * access the property directly. This will ensure all bindings, setters and
-     * getters work correctly.
-     * 
-     * @param {String} key Name of property to get or dot (.) separated path to a property
-     * @returns {*} Value of the property
-     */
-    get: function (key) {
-        var next = false
-        if (~key.indexOf('.')) {
-            var tokens = key.split('.');
-            key = tokens.shift();
-            next = tokens.join('.');
-        }
-
-
-        var accessor = getAccessors(this)[key],
-            val;
-        if (accessor) {
-            val = accessor.target.get(accessor.key);
-        } else {
-            // Call getting function
-            if (this['get_' + key]) {
-                val = this['get_' + key]();
-            } else {
-                val = this[key];
-            }
-        }
-
-        if (next) {
-            return val.get(next);
-        } else {
-            return val;
-        }
-    },
-
-
-    /**
-     * Set a property on the object. Always use this instead of trying to
-     * access the property directly. This will ensure all bindings, setters and
-     * getters work correctly.
-     * 
-     * @param {String} key Name of property to get
-     * @param {*} value New value for the property
-     */
-    set: function (key, value) {
-        var accessor = getAccessors(this)[key],
-            oldVal = this.get(key);
-
-
-        this.triggerBeforeChanged(key, oldVal);
-
-        if (accessor) {
-            accessor.target.set(accessor.key, value);
-        } else {
-
-            if (this['set_' + key]) {
-                this['set_' + key](value);
-            } else {
-                this[key] = value;
-            }
-        }
-        this.triggerChanged(key, oldVal);
-    },
-
-    /**
-     * Set multiple propertys in one go
-     *
-     * @param {Object} kvp An Object where the key is a property name and the value is the value to assign to the property
-     *
-     * @example
-     * var props = {
-     *   monkey: 'ook',
-     *   cat: 'meow',
-     *   dog: 'woof'
-     * };
-     * foo.setValues(props);
-     * console.log(foo.get('cat')); // Logs 'meow'
-     */
-    setValues: function (kvp) {
-        for (var x in kvp) {
-            if (kvp.hasOwnProperty(x)) {
-                this.set(x, kvp[x]);
-            }
-        }
-    },
-
-    changed: function (key) {
-    },
-
-    /**
-     * @private
-     */
-    notify: function (key, oldVal) {
-        var accessor = getAccessors(this)[key];
-        if (accessor) {
-            accessor.target.notify(accessor.key, oldVal);
-        }
-    },
-
-    /**
-     * @private
-     */
-    triggerBeforeChanged: function (key, oldVal) {
-        events.trigger(this, key.toLowerCase() + '_before_changed', oldVal);
-    },
-
-    /**
-     * @private
-     */
-    triggerChanged: function (key, oldVal) {
-        events.trigger(this, key.toLowerCase() + '_changed', oldVal);
-    },
-
-    /**
-     * Bind the value of a property on this object to that of another object so
-     * they always have the same value. Setting the value on either object will update
-     * the other too.
-     *
-     * @param {String} key Name of the property on this object that should be bound
-     * @param {BOject} target Object to bind to
-     * @param {String} [targetKey=key] Key on the target object to bind to
-     * @param {Boolean} [noNotify=false] Set to true to prevent this object's property triggering a 'changed' event when adding the binding
-     */
-    bindTo: function (key, target, targetKey, noNotify) {
-        targetKey = targetKey || key;
-        var self = this;
-        this.unbind(key);
-
-        var oldVal = this.get(key);
-
-        // When bound property changes, trigger a 'changed' event on this one too
-        getBindings(this)[key] = events.addListener(target, targetKey.toLowerCase() + '_changed', function (oldVal) {
-            self.triggerChanged(key, oldVal);
-        });
-
-        addAccessor(this, key, target, targetKey, noNotify);
-    },
-
-    /**
-     * Remove binding from a property which set setup using BObject#bindTo.
-     *
-     * @param {String} key Name of the property on this object to unbind
-     */
-    unbind: function (key) {
-        var binding = getBindings(this)[key];
-        if (!binding) {
-            return;
-        }
-
-        delete getBindings(this)[key];
-        events.removeListener(binding);
-        // Grab current value from bound property
-        var val = this.get(key);
-        delete getAccessors(this)[key];
-        // Set bound value
-        this[key] = val;
-    },
-
-    /**
-     * Remove all bindings on this object
-     */
-    unbindAll: function () {
-        var keys = [],
-            bindings = getBindings(this);
-        for (var k in bindings) {
-            if (bindings.hasOwnProperty(k)) {
-                this.unbind(k);
-            }
-        }
-    },
-
-    /**
-     * Unique ID for this object
-     * @getter id
-     * @type Integer
-     */
-    get_id: function () {
-        if (!this._id) {
-            this._id = ++objectID;
-        }
-
-        return this._id;
+    decodeGEONExT : function (input) {
+        return decodeAsArray(destrip(input),false);
     }
-});
-Object.defineProperty(Function.prototype, 'superclass', {
-    get: function () {
-        return Object.getPrototypeOf(this.prototype)
-    },
-
-    /**
-     * Allow overwriting of 'superclass' property
-     */
-    set: function (x) {
-        Object.defineProperty(this, 'superclass', {
-            configurable: true,
-            writable: true
-        })
-
-        this.superclass = x
-    }
-})
-Object.defineProperty(Function.prototype, '__super__', {
-    get: function () {
-        return Object.getPrototypeOf(this.prototype)
-    }
-})
-
-
-/**
- * Create a new instance of this object
- * @returns {BObject} New instance of this object
- */
-BObject.create = function () {
-    var ret = Object.create(this.prototype);
-    ret.constructor.apply(ret, arguments);
-    return ret;
 };
 
 /**
- * Create a new subclass by extending this one
- * @returns {Object} A new subclass of this object
+ * @private
  */
-BObject.extend = function (parentOrProperties, properties) {
-    var parent
-    if (arguments.length < 2) {
-        parent = this
-        properties = parentOrProperties
+JXG.Util.asciiCharCodeAt = function(str,i){
+	var c = str.charCodeAt(i);
+	if (c>255){
+    	switch (c) {
+			case 8364: c=128;
+	    	break;
+	    	case 8218: c=130;
+	    	break;
+	    	case 402: c=131;
+	    	break;
+	    	case 8222: c=132;
+	    	break;
+	    	case 8230: c=133;
+	    	break;
+	    	case 8224: c=134;
+	    	break;
+	    	case 8225: c=135;
+	    	break;
+	    	case 710: c=136;
+	    	break;
+	    	case 8240: c=137;
+	    	break;
+	    	case 352: c=138;
+	    	break;
+	    	case 8249: c=139;
+	    	break;
+	    	case 338: c=140;
+	    	break;
+	    	case 381: c=142;
+	    	break;
+	    	case 8216: c=145;
+	    	break;
+	    	case 8217: c=146;
+	    	break;
+	    	case 8220: c=147;
+	    	break;
+	    	case 8221: c=148;
+	    	break;
+	    	case 8226: c=149;
+	    	break;
+	    	case 8211: c=150;
+	    	break;
+	    	case 8212: c=151;
+	    	break;
+	    	case 732: c=152;
+	    	break;
+	    	case 8482: c=153;
+	    	break;
+	    	case 353: c=154;
+	    	break;
+	    	case 8250: c=155;
+	    	break;
+	    	case 339: c=156;
+	    	break;
+	    	case 382: c=158;
+	    	break;
+	    	case 376: c=159;
+	    	break;
+	    	default:
+	    	break;
+	    }
+	}
+	return c;
+};
+
+/**
+ * Decoding string into utf-8
+ * @param {String} string to decode
+ * @return {String} utf8 decoded string
+ */
+JXG.Util.utf8Decode = function(utftext) {
+  var string = [];
+  var i = 0;
+  var c = 0, c1 = 0, c2 = 0;
+
+  while ( i < utftext.length ) {
+    c = utftext.charCodeAt(i);
+
+    if (c < 128) {
+      string.push(String.fromCharCode(c));
+      i++;
+    } else if((c > 191) && (c < 224)) {
+      c2 = utftext.charCodeAt(i+1);
+      string.push(String.fromCharCode(((c & 31) << 6) | (c2 & 63)));
+      i += 2;
     } else {
-        parent = parentOrProperties
+      c2 = utftext.charCodeAt(i+1);
+      c3 = utftext.charCodeAt(i+2);
+      string.push(String.fromCharCode(((c & 15) << 12) | ((c2 & 63) << 6) | (c3 & 63)));
+      i += 3;
     }
-
-    if (arguments.length > 1 && this !== BObject) {
-        throw new Error("extend only accepts 1 argument")
-    }
-
-
-    var newObj = function () { 
-        BObject.apply(this, arguments);
-    }
-
-    var args = [], i, x;
-
-    // Copy 'static' properties
-    for (x in parent) {
-        if (parent.hasOwnProperty(x)) {
-            newObj[x] = parent[x];
-        }
-    }
-
-
-    // Add given properties to the prototype
-    newObj.prototype = Object.create(parent.prototype);
-    util.extend(newObj.prototype, properties)
-
-    // Create new instance
-    return newObj;
+  };
+  return string.join('');
 };
 
-/**
- * Get a property from the class. Always use this instead of trying to
- * access the property directly. This will ensure all bindings, setters and
- * getters work correctly.
- * 
- * @function
- * @param {String} key Name of property to get
- * @returns {*} Value of the property
- */
-BObject.get = BObject.prototype.get;
+// Added to exports for Cocos2d
+module.exports = JXG;
 
-/**
- * Set a property on the class. Always use this instead of trying to
- * access the property directly. This will ensure all bindings, setters and
- * getters work correctly.
- * 
- * @function
- * @param {String} key Name of property to get
- * @param {*} value New value for the property
- */
-BObject.set = BObject.prototype.set;
-
-var BArray = BObject.extend(/** @lends BArray# */{
-
-    /**
-     * @constructs 
-     * A bindable array. Allows observing for changes made to its contents
-     *
-     * @extends BObject
-     * @param {Array} [array=[]] A normal JS array to use for data
-     */
-    init: function (array) {
-        this.array = array || [];
-        this.set('length', this.array.length);
-    },
-
-    /**
-     * Get an item
-     *
-     * @param {Integer} i Index to get item from
-     * @returns {*} Value stored in the array at index 'i'
-     */
-    getAt: function (i) {
-        return this.array[i];
-    },
-
-    /**
-     * Set an item -- Overwrites any existing item at index
-     *
-     * @param {Integer} i Index to set item to
-     * @param {*} value Value to assign to index
-     */
-    setAt: function (i, value) {
-        var oldVal = this.array[i];
-        this.array[i] = value;
-
-        events.trigger(this, 'set_at', i, oldVal);
-    },
-
-    /**
-     * Insert a new item into the array without overwriting anything
-     *
-     * @param {Integer} i Index to insert item at
-     * @param {*} value Value to insert
-     */
-    insertAt: function (i, value) {
-        this.array.splice(i, 0, value);
-        this.set('length', this.array.length);
-        events.trigger(this, 'insert_at', i);
-    },
-
-    /**
-     * Remove item from the array and return it
-     *
-     * @param {Integer} i Index to remove
-     * @returns {*} Value that was removed
-     */
-    removeAt: function (i) {
-        var oldVal = this.array[i];
-        this.array.splice(i, 1);
-        this.set('length', this.array.length);
-        events.trigger(this, 'remove_at', i, oldVal);
-
-        return oldVal;
-    },
-
-    /**
-     * Get the internal Javascript Array instance
-     *
-     * @returns {Array} Internal Javascript Array
-     */
-    getArray: function () {
-        return this.array;
-    },
-
-    /**
-     * Append a value to the end of the array and return its new length
-     *
-     * @param {*} value Value to append to the array
-     * @returns {Integer} New length of the array
-     */
-    push: function (value) {
-        this.insertAt(this.array.length, value);
-        return this.array.length;
-    },
-
-    /**
-     * Remove value from the end of the array and return it
-     *
-     * @returns {*} Value that was removed
-     */
-    pop: function () {
-        return this.removeAt(this.array.length - 1);
-    }
-});
-
-exports.BObject = BObject;
-exports.BArray = BArray;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/bobject.js
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/JXGUtil.js
 
 
 __jah__.resources["/libs/cocos2d/libs/box2d.js"] = {data: function (exports, require, module, __filename, __dirname) {
@@ -15360,6 +18867,1080 @@ b2World.prototype.m_inv_dt0 = null;if(typeof exports !== "undefined") {
 }, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/box2d.js
 
 
+__jah__.resources["/libs/cocos2d/libs/bobject.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    events = require('events');
+
+
+/**
+ * @ignore
+ */
+function getAccessors(obj) {
+    if (!obj.js_accessors_) {
+        obj.js_accessors_ = {};
+    }
+    return obj.js_accessors_;
+}
+
+/**
+ * @ignore
+ */
+function getBindings(obj) {
+    if (!obj.js_bindings_) {
+        obj.js_bindings_ = {};
+    }
+    return obj.js_bindings_;
+}
+
+/**
+ * @ignore
+ */
+function addAccessor(obj, key, target, targetKey, noNotify) {
+    getAccessors(obj)[key] = {
+        key: targetKey,
+        target: target
+    };
+
+    if (!noNotify) {
+        obj.triggerChanged(key);
+    }
+}
+
+
+/**
+ * @ignore
+ */
+var objectID = 0;
+
+/**
+ * @class
+ * A bindable object. Allows observing and binding to its properties.
+ */
+function BObject () {
+    this.init.apply(this, arguments)
+}
+BObject.prototype = util.extend(BObject.prototype, /** @lends BObject# */{
+    /**
+     * Unique ID
+     * @type Integer
+     */
+    _id: 0,
+    
+
+    /**
+     * The constructor for subclasses. Overwrite this for any initalisation you
+     * need to do.
+     * @ignore
+     */
+    init: function () {},
+
+    /**
+     * Get a property from the object. Always use this instead of trying to
+     * access the property directly. This will ensure all bindings, setters and
+     * getters work correctly.
+     * 
+     * @param {String} key Name of property to get or dot (.) separated path to a property
+     * @returns {*} Value of the property
+     */
+    get: function (key) {
+        var next = false
+        if (~key.indexOf('.')) {
+            var tokens = key.split('.');
+            key = tokens.shift();
+            next = tokens.join('.');
+        }
+
+
+        var accessor = getAccessors(this)[key],
+            val;
+        if (accessor) {
+            val = accessor.target.get(accessor.key);
+        } else {
+            // Call getting function
+            if (this['get_' + key]) {
+                val = this['get_' + key]();
+            } else {
+                val = this[key];
+            }
+        }
+
+        if (next) {
+            return val.get(next);
+        } else {
+            return val;
+        }
+    },
+
+
+    /**
+     * Set a property on the object. Always use this instead of trying to
+     * access the property directly. This will ensure all bindings, setters and
+     * getters work correctly.
+     * 
+     * @param {String} key Name of property to get
+     * @param {*} value New value for the property
+     */
+    set: function (key, value) {
+        var accessor = getAccessors(this)[key],
+            oldVal = this.get(key);
+
+
+        this.triggerBeforeChanged(key, oldVal);
+
+        if (accessor) {
+            accessor.target.set(accessor.key, value);
+        } else {
+
+            if (this['set_' + key]) {
+                this['set_' + key](value);
+            } else {
+                this[key] = value;
+            }
+        }
+        this.triggerChanged(key, oldVal);
+    },
+
+    /**
+     * Set multiple propertys in one go
+     *
+     * @param {Object} kvp An Object where the key is a property name and the value is the value to assign to the property
+     *
+     * @example
+     * var props = {
+     *   monkey: 'ook',
+     *   cat: 'meow',
+     *   dog: 'woof'
+     * };
+     * foo.setValues(props);
+     * console.log(foo.get('cat')); // Logs 'meow'
+     */
+    setValues: function (kvp) {
+        for (var x in kvp) {
+            if (kvp.hasOwnProperty(x)) {
+                this.set(x, kvp[x]);
+            }
+        }
+    },
+
+    changed: function (key) {
+    },
+
+    /**
+     * @private
+     */
+    notify: function (key, oldVal) {
+        var accessor = getAccessors(this)[key];
+        if (accessor) {
+            accessor.target.notify(accessor.key, oldVal);
+        }
+    },
+
+    /**
+     * @private
+     */
+    triggerBeforeChanged: function (key, oldVal) {
+        events.trigger(this, key.toLowerCase() + '_before_changed', oldVal);
+    },
+
+    /**
+     * @private
+     */
+    triggerChanged: function (key, oldVal) {
+        events.trigger(this, key.toLowerCase() + '_changed', oldVal);
+    },
+
+    /**
+     * Bind the value of a property on this object to that of another object so
+     * they always have the same value. Setting the value on either object will update
+     * the other too.
+     *
+     * @param {String} key Name of the property on this object that should be bound
+     * @param {BOject} target Object to bind to
+     * @param {String} [targetKey=key] Key on the target object to bind to
+     * @param {Boolean} [noNotify=false] Set to true to prevent this object's property triggering a 'changed' event when adding the binding
+     */
+    bindTo: function (key, target, targetKey, noNotify) {
+        targetKey = targetKey || key;
+        var self = this;
+        this.unbind(key);
+
+        var oldVal = this.get(key);
+
+        // When bound property changes, trigger a 'changed' event on this one too
+        getBindings(this)[key] = events.addListener(target, targetKey.toLowerCase() + '_changed', function (oldVal) {
+            self.triggerChanged(key, oldVal);
+        });
+
+        addAccessor(this, key, target, targetKey, noNotify);
+    },
+
+    /**
+     * Remove binding from a property which set setup using BObject#bindTo.
+     *
+     * @param {String} key Name of the property on this object to unbind
+     */
+    unbind: function (key) {
+        var binding = getBindings(this)[key];
+        if (!binding) {
+            return;
+        }
+
+        delete getBindings(this)[key];
+        events.removeListener(binding);
+        // Grab current value from bound property
+        var val = this.get(key);
+        delete getAccessors(this)[key];
+        // Set bound value
+        this[key] = val;
+    },
+
+    /**
+     * Remove all bindings on this object
+     */
+    unbindAll: function () {
+        var keys = [],
+            bindings = getBindings(this);
+        for (var k in bindings) {
+            if (bindings.hasOwnProperty(k)) {
+                this.unbind(k);
+            }
+        }
+    },
+
+    /**
+     * Unique ID for this object
+     * @getter id
+     * @type Integer
+     */
+    get_id: function () {
+        if (!this._id) {
+            this._id = ++objectID;
+        }
+
+        return this._id;
+    }
+});
+Object.defineProperty(Function.prototype, 'superclass', {
+    get: function () {
+        return Object.getPrototypeOf(this.prototype)
+    },
+
+    /**
+     * Allow overwriting of 'superclass' property
+     */
+    set: function (x) {
+        Object.defineProperty(this, 'superclass', {
+            configurable: true,
+            writable: true
+        })
+
+        this.superclass = x
+    }
+})
+Object.defineProperty(Function.prototype, '__super__', {
+    get: function () {
+        return Object.getPrototypeOf(this.prototype)
+    }
+})
+
+
+/**
+ * Create a new instance of this object
+ * @returns {BObject} New instance of this object
+ */
+BObject.create = function () {
+    var ret = Object.create(this.prototype);
+    ret.constructor.apply(ret, arguments);
+    return ret;
+};
+
+/**
+ * Create a new subclass by extending this one
+ * @returns {Object} A new subclass of this object
+ */
+BObject.extend = function (parentOrProperties, properties) {
+    var parent
+    if (arguments.length < 2) {
+        parent = this
+        properties = parentOrProperties
+    } else {
+        parent = parentOrProperties
+    }
+
+    if (arguments.length > 1 && this !== BObject) {
+        throw new Error("extend only accepts 1 argument")
+    }
+
+
+    var newObj = function () { 
+        BObject.apply(this, arguments);
+    }
+
+    var args = [], i, x;
+
+    // Copy 'static' properties
+    for (x in parent) {
+        if (parent.hasOwnProperty(x)) {
+            newObj[x] = parent[x];
+        }
+    }
+
+
+    // Add given properties to the prototype
+    newObj.prototype = Object.create(parent.prototype);
+    util.extend(newObj.prototype, properties)
+
+    // Create new instance
+    return newObj;
+};
+
+/**
+ * Get a property from the class. Always use this instead of trying to
+ * access the property directly. This will ensure all bindings, setters and
+ * getters work correctly.
+ * 
+ * @function
+ * @param {String} key Name of property to get
+ * @returns {*} Value of the property
+ */
+BObject.get = BObject.prototype.get;
+
+/**
+ * Set a property on the class. Always use this instead of trying to
+ * access the property directly. This will ensure all bindings, setters and
+ * getters work correctly.
+ * 
+ * @function
+ * @param {String} key Name of property to get
+ * @param {*} value New value for the property
+ */
+BObject.set = BObject.prototype.set;
+
+var BArray = BObject.extend(/** @lends BArray# */{
+
+    /**
+     * @constructs 
+     * A bindable array. Allows observing for changes made to its contents
+     *
+     * @extends BObject
+     * @param {Array} [array=[]] A normal JS array to use for data
+     */
+    init: function (array) {
+        this.array = array || [];
+        this.set('length', this.array.length);
+    },
+
+    /**
+     * Get an item
+     *
+     * @param {Integer} i Index to get item from
+     * @returns {*} Value stored in the array at index 'i'
+     */
+    getAt: function (i) {
+        return this.array[i];
+    },
+
+    /**
+     * Set an item -- Overwrites any existing item at index
+     *
+     * @param {Integer} i Index to set item to
+     * @param {*} value Value to assign to index
+     */
+    setAt: function (i, value) {
+        var oldVal = this.array[i];
+        this.array[i] = value;
+
+        events.trigger(this, 'set_at', i, oldVal);
+    },
+
+    /**
+     * Insert a new item into the array without overwriting anything
+     *
+     * @param {Integer} i Index to insert item at
+     * @param {*} value Value to insert
+     */
+    insertAt: function (i, value) {
+        this.array.splice(i, 0, value);
+        this.set('length', this.array.length);
+        events.trigger(this, 'insert_at', i);
+    },
+
+    /**
+     * Remove item from the array and return it
+     *
+     * @param {Integer} i Index to remove
+     * @returns {*} Value that was removed
+     */
+    removeAt: function (i) {
+        var oldVal = this.array[i];
+        this.array.splice(i, 1);
+        this.set('length', this.array.length);
+        events.trigger(this, 'remove_at', i, oldVal);
+
+        return oldVal;
+    },
+
+    /**
+     * Get the internal Javascript Array instance
+     *
+     * @returns {Array} Internal Javascript Array
+     */
+    getArray: function () {
+        return this.array;
+    },
+
+    /**
+     * Append a value to the end of the array and return its new length
+     *
+     * @param {*} value Value to append to the array
+     * @returns {Integer} New length of the array
+     */
+    push: function (value) {
+        this.insertAt(this.array.length, value);
+        return this.array.length;
+    },
+
+    /**
+     * Remove value from the end of the array and return it
+     *
+     * @returns {*} Value that was removed
+     */
+    pop: function () {
+        return this.removeAt(this.array.length - 1);
+    }
+});
+
+exports.BObject = BObject;
+exports.BArray = BArray;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/bobject.js
+
+
+__jah__.resources["/libs/cocos2d/libs/util.js"] = {data: function (exports, require, module, __filename, __dirname) {
+var path = require('path');
+
+/**
+ * @namespace
+ * Useful utility functions
+ */
+var util = {
+    /**
+     * Merge two or more objects and return the result.
+     *
+     * @param {Object} firstObject First object to merge with
+     * @param {Object} secondObject Second object to merge with
+     * @param {Object} [...] More objects to merge
+     * @returns {Object} A new object containing the properties of all the objects passed in
+     */
+    merge: function(firstObject, secondObject) {
+        var result = {};
+
+        for (var i = 0; i < arguments.length; i++) {
+            var obj = arguments[i];
+
+            for (var x in obj) {
+                if (!obj.hasOwnProperty(x)) {
+                    continue;
+                }
+
+                result[x] = obj[x];
+            }
+        };
+
+        return result;
+    },
+
+    /**
+     * Creates a deep copy of an object
+     *
+     * @param {Object} obj The Object to copy
+     * @returns {Object} A copy of the original Object
+     */
+    copy: function(obj) {
+        if (obj === null) {
+            return null;
+        }
+
+        var copy;
+
+        if (obj instanceof Array) {
+            copy = [];
+            for (var i = 0, len = obj.length; i < len; i++) {
+                copy[i] = util.copy(obj[i]);
+            }
+        } else if (typeof(obj) == 'object') {
+            if (typeof(obj.copy) == 'function') {
+                copy = obj.copy();
+            } else {
+                copy = {};
+
+                var o, x;
+                for (x in obj) {
+                    copy[x] = util.copy(obj[x]);
+                }
+            }
+        } else {
+            // Primative type. Doesn't need copying
+            copy = obj;
+        }
+
+        return copy;
+    },
+
+    /**
+     * Iterates over an array and calls a function for each item.
+     *
+     * @param {Array} arr An Array to iterate over
+     * @param {Function} func A function to call for each item in the array
+     * @returns {Array} The original array
+     */
+    each: function(arr, func) {
+        var i = 0,
+            len = arr.length;
+        for (i = 0; i < len; i++) {
+            func(arr[i], i);
+        }
+
+        return arr;
+    },
+
+    /**
+     * Iterates over an array, calls a function for each item and returns the results.
+     *
+     * @param {Array} arr An Array to iterate over
+     * @param {Function} func A function to call for each item in the array
+     * @returns {Array} The return values from each function call
+     */
+    map: function(arr, func) {
+        var i = 0,
+            len = arr.length,
+            result = [];
+
+        for (i = 0; i < len; i++) {
+            result.push(func(arr[i], i));
+        }
+
+        return result;
+    },
+
+    extend: function(target, ext) {
+        if (arguments.length < 2) {
+            throw "You must provide at least a target and 1 object to extend from"
+        }
+
+        var i, j, obj, key, val;
+
+        for (i = 1; i < arguments.length; i++) {
+            obj = arguments[i];
+            for (key in obj) {
+                // Don't copy built-ins
+                if (!obj.hasOwnProperty(key)) {
+                    continue;
+                }
+
+                val = obj[key];
+                // Don't copy undefineds or references to target (would cause infinite loop)
+                if (val === undefined || val === target) {
+                    continue;
+                }
+
+                // Replace existing function and store reference to it in .base
+                if (val instanceof Function && target[key] && val !== target[key]) {
+                    val.base = target[key];
+                    val._isProperty = val.base._isProperty;
+                }
+                target[key] = val;
+
+                if (val instanceof Function) {
+                    // If this function observes make a reference to it so we can set
+                    // them up when this get instantiated
+                    if (val._observing) {
+                        // Force a COPY of the array or we will probably end up with various
+                        // classes sharing the same one.
+                        if (!target._observingFunctions) {
+                            target._observingFunctions = [];
+                        } else {
+                            target._observingFunctions = target._observingFunctions.slice(0);
+                        }
+
+
+                        for (j = 0; j<val._observing.length; j++) {
+                            target._observingFunctions.push({property:val._observing[j], method: key});
+                        }
+                    } // if (val._observing)
+
+                    // If this is a computer property then add it to the list so get/set know where to look
+                    if (val._isProperty) {
+                        if (!target._computedProperties) {
+                            target._computedProperties = [];
+                        } else {
+                            target._computedProperties = target._computedProperties.slice(0);
+                        }
+
+                        target._computedProperties.push(key)
+                    }
+                }
+        
+            }
+        }
+
+
+        return target;
+    },
+
+    beget: function(o) {
+        var F = function(){};
+        F.prototype = o;
+        var ret  = new F();
+        F.prototype = null;
+        return ret;
+    },
+
+    callback: function(target, method) {
+        if (typeof(method) == 'string') {
+            var methodName = method;
+            method = target[method];
+            if (!method) {
+                throw "Callback to undefined method: " + methodName;
+            }
+        }
+        if (!method) {
+            throw "Callback with no method to call";
+        }
+
+        return function() {
+            method.apply(target, arguments);
+        }
+    },
+
+    domReady: function() {
+        if (this._isReady) {
+            return;
+        }
+
+        if (!document.body) {
+            setTimeout(function() { util.domReady(); }, 13);
+        }
+
+        window.__isReady = true;
+
+        if (window.__readyList) {
+            var fn, i = 0;
+            while ( (fn = window.__readyList[ i++ ]) ) {
+                fn.call(document);
+            }
+
+            window.__readyList = null;
+            delete window.__readyList;
+        }
+    },
+
+
+    /**
+     * Adapted from jQuery
+     * @ignore
+     */
+    bindReady: function() {
+
+        if (window.__readyBound) {
+            return;
+        }
+
+        window.__readyBound = true;
+
+        // Catch cases where $(document).ready() is called after the
+        // browser event has already occurred.
+        if ( document.readyState === "complete" ) {
+            return util.domReady();
+        }
+
+        // Mozilla, Opera and webkit nightlies currently support this event
+        if ( document.addEventListener ) {
+            // Use the handy event callback
+            //document.addEventListener( "DOMContentLoaded", DOMContentLoaded, false );
+            
+            // A fallback to window.onload, that will always work
+            window.addEventListener( "load", util.domReady, false );
+
+        // If IE event model is used
+        } else if ( document.attachEvent ) {
+            // ensure firing before onload,
+            // maybe late but safe also for iframes
+            //document.attachEvent("onreadystatechange", DOMContentLoaded);
+            
+            // A fallback to window.onload, that will always work
+            window.attachEvent( "onload", util.domReady );
+
+            // If IE and not a frame
+            /*
+            // continually check to see if the document is ready
+            var toplevel = false;
+
+            try {
+                toplevel = window.frameElement == null;
+            } catch(e) {}
+
+            if ( document.documentElement.doScroll && toplevel ) {
+                doScrollCheck();
+            }
+            */
+        }
+    },
+
+
+
+    ready: function(func) {
+        if (window.__isReady) {
+            func()
+        } else {
+            if (!window.__readyList) {
+                window.__readyList = [];
+            }
+            window.__readyList.push(func);
+        }
+
+        util.bindReady();
+    },
+
+
+    /**
+     * Tests if a given object is an Array
+     *
+     * @param {Array} ar The object to test
+     *
+     * @returns {Boolean} True if it is an Array, otherwise false
+     */
+    isArray: function(ar) {
+      return ar instanceof Array
+          || (ar && ar !== Object.prototype && util.isArray(ar.__proto__));
+    },
+
+
+    /**
+     * Tests if a given object is a RegExp
+     *
+     * @param {RegExp} ar The object to test
+     *
+     * @returns {Boolean} True if it is an RegExp, otherwise false
+     */
+    isRegExp: function(re) {
+      var s = ""+re;
+      return re instanceof RegExp // easy case
+          || typeof(re) === "function" // duck-type for context-switching evalcx case
+          && re.constructor.name === "RegExp"
+          && re.compile
+          && re.test
+          && re.exec
+          && s.charAt(0) === "/"
+          && s.substr(-1) === "/";
+    },
+
+
+    /**
+     * Tests if a given object is a Date
+     *
+     * @param {Date} ar The object to test
+     *
+     * @returns {Boolean} True if it is an Date, otherwise false
+     */
+    isDate: function(d) {
+        if (d instanceof Date) return true;
+        if (typeof d !== "object") return false;
+        var properties = Date.prototype && Object.getOwnPropertyNames(Date.prototype);
+        var proto = d.__proto__ && Object.getOwnPropertyNames(d.__proto__);
+        return JSON.stringify(proto) === JSON.stringify(properties);
+    },
+
+    /**
+     * Utility to populate a namespace's index with its modules
+     *
+     * @param {Object} parent The module the namespace lives in. parent.exports will be populated automatically
+     * @param {String} modules A space separated string of all the module names
+     *
+     * @returns {Object} The index namespace
+     */
+    populateIndex: function(parent, modules) {
+        var namespace = {};
+        modules = modules.split(' ');
+
+        util.each(modules, function(mod, i) {
+            // Use the global 'require' which allows overriding the parent module
+            util.extend(namespace, window.require('./' + mod, parent));
+        });
+
+        util.extend(parent.exports, namespace);
+
+        return namespace;
+    }
+
+
+}
+
+util.extend(String.prototype, /** @scope String.prototype */ {
+    /**
+     * Create an array of words from a string
+     *
+     * @returns {String[]} Array of the words in the string
+     */
+    w: function() {
+        return this.split(' ');
+    }
+});
+
+
+
+
+module.exports = util;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/util.js
+
+
+__jah__.resources["/libs/cocos2d/libs/Plist.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/** @ignore
+ * XML Node types
+ */
+var ELEMENT_NODE                = 1,
+    ATTRIBUTE_NODE              = 2,
+    TEXT_NODE                   = 3,
+    CDATA_SECTION_NODE          = 4,
+    ENTITY_REFERENCE_NODE       = 5,
+    ENTITY_NODE                 = 6,
+    PROCESSING_INSTRUCTION_NODE = 7,
+    COMMENT_NODE                = 8,
+    DOCUMENT_NODE               = 9,
+    DOCUMENT_TYPE_NODE          = 10,
+    DOCUMENT_FRAGMENT_NODE      = 11,
+    NOTATION_NODE               = 12;
+
+
+var Plist = BObject.extend (/** @lends Plist# */{
+    /**
+     * The unserialized data inside the Plist file
+     * @type Object
+     */
+    data: null,
+
+    /**
+     * An object representation of an XML Property List file
+     *
+     * @constructs
+     * @extends BObject
+     * @param {Options} opts Options
+     * @config {String} [file] The path to a .plist file
+     * @config {String} [data] The contents of a .plist file
+     */
+    init: function(opts) {
+        var file = opts['file'],
+            data = opts['data'];
+
+        if (file && !data) {
+            data = resource(file);
+        }
+
+
+        var parser = new DOMParser(),
+            doc = parser.parseFromString(data, 'text/xml'),
+            plist = doc.documentElement;
+
+        if (plist.tagName != 'plist') {
+            throw "Not a plist file";
+        }
+
+
+        // Get first real node
+        var node = null;
+        for (var i = 0, len = plist.childNodes.length; i < len; i++) {
+            node = plist.childNodes[i];
+            if (node.nodeType == ELEMENT_NODE) {
+                break;
+            }
+        }
+
+        this.set('data', this.parseNode_(node));
+    },
+
+
+    /**
+     * @private
+     * Parses an XML node inside the Plist file
+     * @returns {Object/Array/String/Integer/Float} A JS representation of the node value
+     */
+    parseNode_: function(node) {
+        var data = null;
+        switch(node.tagName) {
+        case 'dict':
+            data = this.parseDict_(node); 
+            break;
+        case 'array':
+            data = this.parseArray_(node); 
+            break;
+        case 'string':
+            // FIXME - This needs to handle Firefox's 4KB nodeValue limit
+            data = node.firstChild.nodeValue;
+            break
+        case 'false':
+            data = false;
+            break
+        case 'true':
+            data = true;
+            break
+        case 'real':
+            data = parseFloat(node.firstChild.nodeValue);
+            break
+        case 'integer':
+            data = parseInt(node.firstChild.nodeValue, 10);
+            break
+        }
+
+        return data;
+    },
+
+    /**
+     * @private
+     * Parses a <dict> node in a plist file
+     *
+     * @param {XMLElement}
+     * @returns {Object} A simple key/value JS Object representing the <dict>
+     */
+    parseDict_: function(node) {
+        var data = {};
+
+        var key = null;
+        for (var i = 0, len = node.childNodes.length; i < len; i++) {
+            var child = node.childNodes[i];
+            if (child.nodeType != ELEMENT_NODE) {
+                continue;
+            }
+
+            // Grab the key, next noe should be the value
+            if (child.tagName == 'key') {
+                key = child.firstChild.nodeValue;
+            } else {
+                // Parse the value node
+                data[key] = this.parseNode_(child);
+            }
+        }
+
+
+        return data;
+    },
+
+    /**
+     * @private
+     * Parses an <array> node in a plist file
+     *
+     * @param {XMLElement}
+     * @returns {Array} A simple JS Array representing the <array>
+     */
+    parseArray_: function(node) {
+        var data = [];
+
+        for (var i = 0, len = node.childNodes.length; i < len; i++) {
+            var child = node.childNodes[i];
+            if (child.nodeType != ELEMENT_NODE) {
+                continue;
+            }
+
+            data.push(this.parseNode_(child));
+        }
+
+        return data;
+    }
+});
+
+
+exports.Plist = Plist;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/Plist.js
+
+
+__jah__.resources["/libs/cocos2d/libs/gzip.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/**
+ * @fileoverview 
+ */
+
+/** @ignore */
+var JXG = require('./JXGUtil');
+
+/**
+ * @namespace
+ * Wrappers around JXG's GZip utils
+ * @see JXG.Util
+ */
+var gzip = {
+    /**
+     * Unpack a gzipped byte array
+     *
+     * @param {Integer[]} input Byte array
+     * @returns {String} Unpacked byte string
+     */
+    unzip: function(input) {
+        return (new JXG.Util.Unzip(input)).unzip()[0][0];
+    },
+
+    /**
+     * Unpack a gzipped byte string encoded as base64
+     *
+     * @param {String} input Byte string encoded as base64
+     * @returns {String} Unpacked byte string
+     */
+    unzipBase64: function(input) {
+        return (new JXG.Util.Unzip(JXG.Util.Base64.decodeAsArray(input))).unzip()[0][0];
+    },
+
+    /**
+     * Unpack a gzipped byte string encoded as base64
+     *
+     * @param {String} input Byte string encoded as base64
+     * @param {Integer} bytes Bytes per array item
+     * @returns {Integer[]} Unpacked byte array
+     */
+    unzipBase64AsArray: function(input, bytes) {
+        bytes = bytes || 1;
+
+        var dec = this.unzipBase64(input),
+            ar = [], i, j, len;
+        for (i = 0, len = dec.length/bytes; i < len; i++){
+            ar[i] = 0;
+            for (j = bytes-1; j >= 0; --j){
+                ar[i] += dec.charCodeAt((i *bytes) +j) << (j *8);
+            }
+        }
+        return ar;
+    },
+
+    /**
+     * Unpack a gzipped byte array
+     *
+     * @param {Integer[]} input Byte array
+     * @param {Integer} bytes Bytes per array item
+     * @returns {Integer[]} Unpacked byte array
+     */
+    unzipAsArray: function (input, bytes) {
+        bytes = bytes || 1;
+
+        var dec = this.unzip(input),
+            ar = [], i, j, len;
+        for (i = 0, len = dec.length/bytes; i < len; i++){
+            ar[i] = 0;
+            for (j = bytes-1; j >= 0; --j){
+                ar[i] += dec.charCodeAt((i *bytes) +j) << (j *8);
+            }
+        }
+        return ar;
+    }
+
+};
+
+module.exports = gzip;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/gzip.js
+
+
 __jah__.resources["/libs/cocos2d/libs/geometry.js"] = {data: function (exports, require, module, __filename, __dirname) {
 /*globals module exports resource require BObject BArray*/
 /*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
@@ -15898,6173 +20479,61 @@ module.exports = geometry;
 }, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/geometry.js
 
 
-__jah__.resources["/libs/cocos2d/libs/gzip.js"] = {data: function (exports, require, module, __filename, __dirname) {
+__jah__.resources["/libs/cocos2d/libs/base64.js"] = {data: function (exports, require, module, __filename, __dirname) {
 /**
- * @fileoverview 
+ * Thin wrapper around JXG's Base64 utils
  */
 
 /** @ignore */
-var JXG = require('./JXGUtil');
-
-/**
- * @namespace
- * Wrappers around JXG's GZip utils
- * @see JXG.Util
- */
-var gzip = {
-    /**
-     * Unpack a gzipped byte array
-     *
-     * @param {Integer[]} input Byte array
-     * @returns {String} Unpacked byte string
-     */
-    unzip: function(input) {
-        return (new JXG.Util.Unzip(input)).unzip()[0][0];
-    },
-
-    /**
-     * Unpack a gzipped byte string encoded as base64
-     *
-     * @param {String} input Byte string encoded as base64
-     * @returns {String} Unpacked byte string
-     */
-    unzipBase64: function(input) {
-        return (new JXG.Util.Unzip(JXG.Util.Base64.decodeAsArray(input))).unzip()[0][0];
-    },
-
-    /**
-     * Unpack a gzipped byte string encoded as base64
-     *
-     * @param {String} input Byte string encoded as base64
-     * @param {Integer} bytes Bytes per array item
-     * @returns {Integer[]} Unpacked byte array
-     */
-    unzipBase64AsArray: function(input, bytes) {
-        bytes = bytes || 1;
-
-        var dec = this.unzipBase64(input),
-            ar = [], i, j, len;
-        for (i = 0, len = dec.length/bytes; i < len; i++){
-            ar[i] = 0;
-            for (j = bytes-1; j >= 0; --j){
-                ar[i] += dec.charCodeAt((i *bytes) +j) << (j *8);
-            }
-        }
-        return ar;
-    },
-
-    /**
-     * Unpack a gzipped byte array
-     *
-     * @param {Integer[]} input Byte array
-     * @param {Integer} bytes Bytes per array item
-     * @returns {Integer[]} Unpacked byte array
-     */
-    unzipAsArray: function (input, bytes) {
-        bytes = bytes || 1;
-
-        var dec = this.unzip(input),
-            ar = [], i, j, len;
-        for (i = 0, len = dec.length/bytes; i < len; i++){
-            ar[i] = 0;
-            for (j = bytes-1; j >= 0; --j){
-                ar[i] += dec.charCodeAt((i *bytes) +j) << (j *8);
-            }
-        }
-        return ar;
-    }
-
-};
-
-module.exports = gzip;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/gzip.js
-
-
-__jah__.resources["/libs/cocos2d/libs/JXGUtil.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*
-    Copyright 2008,2009
-        Matthias Ehmann,
-        Michael Gerhaeuser,
-        Carsten Miller,
-        Bianca Valentin,
-        Alfred Wassermann,
-        Peter Wilfahrt
-
-    This file is part of JSXGraph.
-
-    JSXGraph is free software: you can redistribute it and/or modify
-    it under the terms of the GNU Lesser General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    JSXGraph is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU Lesser General Public License for more details.
-
-    You should have received a copy of the GNU Lesser General Public License
-    along with JSXGraph.  If not, see <http://www.gnu.org/licenses/>.
-*/
-
-/**
- * @fileoverview Utilities for uncompressing and base64 decoding
- */
+var JXG = require('JXGUtil');
 
 /** @namespace */
-var JXG = {};
-
-/**
-  * @class Util class
-  * Class for gunzipping, unzipping and base64 decoding of files.
-  * It is used for reading GEONExT, Geogebra and Intergeo files.
-  *
-  * Only Huffman codes are decoded in gunzip.
-  * The code is based on the source code for gunzip.c by Pasi Ojala 
-  * @see <a href="http://www.cs.tut.fi/~albert/Dev/gunzip/gunzip.c">http://www.cs.tut.fi/~albert/Dev/gunzip/gunzip.c</a>
-  * @see <a href="http://www.cs.tut.fi/~albert">http://www.cs.tut.fi/~albert</a>
-  */
-JXG.Util = {};
-                                 
-/**
- * Unzip zip files
- */
-JXG.Util.Unzip = function (barray){
-    var outputArr = [],
-        output = "",
-        debug = false,
-        gpflags,
-        files = 0,
-        unzipped = [],
-        crc,
-        buf32k = new Array(32768),
-        bIdx = 0,
-        modeZIP=false,
-
-        CRC, SIZE,
-    
-        bitReverse = [
-        0x00, 0x80, 0x40, 0xc0, 0x20, 0xa0, 0x60, 0xe0,
-        0x10, 0x90, 0x50, 0xd0, 0x30, 0xb0, 0x70, 0xf0,
-        0x08, 0x88, 0x48, 0xc8, 0x28, 0xa8, 0x68, 0xe8,
-        0x18, 0x98, 0x58, 0xd8, 0x38, 0xb8, 0x78, 0xf8,
-        0x04, 0x84, 0x44, 0xc4, 0x24, 0xa4, 0x64, 0xe4,
-        0x14, 0x94, 0x54, 0xd4, 0x34, 0xb4, 0x74, 0xf4,
-        0x0c, 0x8c, 0x4c, 0xcc, 0x2c, 0xac, 0x6c, 0xec,
-        0x1c, 0x9c, 0x5c, 0xdc, 0x3c, 0xbc, 0x7c, 0xfc,
-        0x02, 0x82, 0x42, 0xc2, 0x22, 0xa2, 0x62, 0xe2,
-        0x12, 0x92, 0x52, 0xd2, 0x32, 0xb2, 0x72, 0xf2,
-        0x0a, 0x8a, 0x4a, 0xca, 0x2a, 0xaa, 0x6a, 0xea,
-        0x1a, 0x9a, 0x5a, 0xda, 0x3a, 0xba, 0x7a, 0xfa,
-        0x06, 0x86, 0x46, 0xc6, 0x26, 0xa6, 0x66, 0xe6,
-        0x16, 0x96, 0x56, 0xd6, 0x36, 0xb6, 0x76, 0xf6,
-        0x0e, 0x8e, 0x4e, 0xce, 0x2e, 0xae, 0x6e, 0xee,
-        0x1e, 0x9e, 0x5e, 0xde, 0x3e, 0xbe, 0x7e, 0xfe,
-        0x01, 0x81, 0x41, 0xc1, 0x21, 0xa1, 0x61, 0xe1,
-        0x11, 0x91, 0x51, 0xd1, 0x31, 0xb1, 0x71, 0xf1,
-        0x09, 0x89, 0x49, 0xc9, 0x29, 0xa9, 0x69, 0xe9,
-        0x19, 0x99, 0x59, 0xd9, 0x39, 0xb9, 0x79, 0xf9,
-        0x05, 0x85, 0x45, 0xc5, 0x25, 0xa5, 0x65, 0xe5,
-        0x15, 0x95, 0x55, 0xd5, 0x35, 0xb5, 0x75, 0xf5,
-        0x0d, 0x8d, 0x4d, 0xcd, 0x2d, 0xad, 0x6d, 0xed,
-        0x1d, 0x9d, 0x5d, 0xdd, 0x3d, 0xbd, 0x7d, 0xfd,
-        0x03, 0x83, 0x43, 0xc3, 0x23, 0xa3, 0x63, 0xe3,
-        0x13, 0x93, 0x53, 0xd3, 0x33, 0xb3, 0x73, 0xf3,
-        0x0b, 0x8b, 0x4b, 0xcb, 0x2b, 0xab, 0x6b, 0xeb,
-        0x1b, 0x9b, 0x5b, 0xdb, 0x3b, 0xbb, 0x7b, 0xfb,
-        0x07, 0x87, 0x47, 0xc7, 0x27, 0xa7, 0x67, 0xe7,
-        0x17, 0x97, 0x57, 0xd7, 0x37, 0xb7, 0x77, 0xf7,
-        0x0f, 0x8f, 0x4f, 0xcf, 0x2f, 0xaf, 0x6f, 0xef,
-        0x1f, 0x9f, 0x5f, 0xdf, 0x3f, 0xbf, 0x7f, 0xff
-    ],
-    
-    cplens = [
-        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31,
-        35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258, 0, 0
-    ],
-
-    cplext = [
-        0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2,
-        3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0, 99, 99
-    ], /* 99==invalid */
-
-    cpdist = [
-        0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0007, 0x0009, 0x000d,
-        0x0011, 0x0019, 0x0021, 0x0031, 0x0041, 0x0061, 0x0081, 0x00c1,
-        0x0101, 0x0181, 0x0201, 0x0301, 0x0401, 0x0601, 0x0801, 0x0c01,
-        0x1001, 0x1801, 0x2001, 0x3001, 0x4001, 0x6001
-    ],
-
-    cpdext = [
-        0,  0,  0,  0,  1,  1,  2,  2,
-        3,  3,  4,  4,  5,  5,  6,  6,
-        7,  7,  8,  8,  9,  9, 10, 10,
-        11, 11, 12, 12, 13, 13
-    ],
-    
-    border = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15],
-    
-    bA = barray,
-
-    bytepos=0,
-    bitpos=0,
-    bb = 1,
-    bits=0,
-    
-    NAMEMAX = 256,
-    
-    nameBuf = [],
-    
-    fileout;
-    
-    function readByte(){
-        bits+=8;
-        if (bytepos<bA.length){
-            //if (debug)
-            //    document.write(bytepos+": "+bA[bytepos]+"<br>");
-            return bA[bytepos++];
-        } else
-            return -1;
-    };
-
-    function byteAlign(){
-        bb = 1;
-    };
-    
-    function readBit(){
-        var carry;
-        bits++;
-        carry = (bb & 1);
-        bb >>= 1;
-        if (bb==0){
-            bb = readByte();
-            carry = (bb & 1);
-            bb = (bb>>1) | 0x80;
-        }
-        return carry;
-    };
-
-    function readBits(a) {
-        var res = 0,
-            i = a;
-    
-        while(i--) {
-            res = (res<<1) | readBit();
-        }
-        if(a) {
-            res = bitReverse[res]>>(8-a);
-        }
-        return res;
-    };
-        
-    function flushBuffer(){
-        //document.write('FLUSHBUFFER:'+buf32k);
-        bIdx = 0;
-    };
-    function addBuffer(a){
-        SIZE++;
-        //CRC=updcrc(a,crc);
-        buf32k[bIdx++] = a;
-        outputArr.push(String.fromCharCode(a));
-        //output+=String.fromCharCode(a);
-        if(bIdx==0x8000){
-            //document.write('ADDBUFFER:'+buf32k);
-            bIdx=0;
-        }
-    };
-    
-    function HufNode() {
-        this.b0=0;
-        this.b1=0;
-        this.jump = null;
-        this.jumppos = -1;
-    };
-
-    var LITERALS = 288;
-    
-    var literalTree = new Array(LITERALS);
-    var distanceTree = new Array(32);
-    var treepos=0;
-    var Places = null;
-    var Places2 = null;
-    
-    var impDistanceTree = new Array(64);
-    var impLengthTree = new Array(64);
-    
-    var len = 0;
-    var fpos = new Array(17);
-    fpos[0]=0;
-    var flens;
-    var fmax;
-    
-    function IsPat() {
-        while (1) {
-            if (fpos[len] >= fmax)
-                return -1;
-            if (flens[fpos[len]] == len)
-                return fpos[len]++;
-            fpos[len]++;
-        }
-    };
-
-    function Rec() {
-        var curplace = Places[treepos];
-        var tmp;
-        if (debug)
-    		document.write("<br>len:"+len+" treepos:"+treepos);
-        if(len==17) { //war 17
-            return -1;
-        }
-        treepos++;
-        len++;
-    	
-        tmp = IsPat();
-        if (debug)
-        	document.write("<br>IsPat "+tmp);
-        if(tmp >= 0) {
-            curplace.b0 = tmp;    /* leaf cell for 0-bit */
-            if (debug)
-            	document.write("<br>b0 "+curplace.b0);
-        } else {
-        /* Not a Leaf cell */
-        curplace.b0 = 0x8000;
-        if (debug)
-        	document.write("<br>b0 "+curplace.b0);
-        if(Rec())
-            return -1;
-        }
-        tmp = IsPat();
-        if(tmp >= 0) {
-            curplace.b1 = tmp;    /* leaf cell for 1-bit */
-            if (debug)
-            	document.write("<br>b1 "+curplace.b1);
-            curplace.jump = null;    /* Just for the display routine */
-        } else {
-            /* Not a Leaf cell */
-            curplace.b1 = 0x8000;
-            if (debug)
-            	document.write("<br>b1 "+curplace.b1);
-            curplace.jump = Places[treepos];
-            curplace.jumppos = treepos;
-            if(Rec())
-                return -1;
-        }
-        len--;
-        return 0;
-    };
-
-    function CreateTree(currentTree, numval, lengths, show) {
-        var i;
-        /* Create the Huffman decode tree/table */
-        //document.write("<br>createtree<br>");
-        if (debug)
-        	document.write("currentTree "+currentTree+" numval "+numval+" lengths "+lengths+" show "+show);
-        Places = currentTree;
-        treepos=0;
-        flens = lengths;
-        fmax  = numval;
-        for (i=0;i<17;i++)
-            fpos[i] = 0;
-        len = 0;
-        if(Rec()) {
-            //fprintf(stderr, "invalid huffman tree\n");
-            if (debug)
-            	alert("invalid huffman tree\n");
-            return -1;
-        }
-        if (debug){
-        	document.write('<br>Tree: '+Places.length);
-        	for (var a=0;a<32;a++){
-            	document.write("Places["+a+"].b0="+Places[a].b0+"<br>");
-            	document.write("Places["+a+"].b1="+Places[a].b1+"<br>");
-        	}
-        }
-
-        return 0;
-    };
-    
-    function DecodeValue(currentTree) {
-        var len, i,
-            xtreepos=0,
-            X = currentTree[xtreepos],
-            b;
-
-        /* decode one symbol of the data */
-        while(1) {
-            b=readBit();
-            if (debug)
-            	document.write("b="+b);
-            if(b) {
-                if(!(X.b1 & 0x8000)){
-                	if (debug)
-                    	document.write("ret1");
-                    return X.b1;    /* If leaf node, return data */
-                }
-                X = X.jump;
-                len = currentTree.length;
-                for (i=0;i<len;i++){
-                    if (currentTree[i]===X){
-                        xtreepos=i;
-                        break;
-                    }
-                }
-                //xtreepos++;
-            } else {
-                if(!(X.b0 & 0x8000)){
-                	if (debug)
-                    	document.write("ret2");
-                    return X.b0;    /* If leaf node, return data */
-                }
-                //X++; //??????????????????
-                xtreepos++;
-                X = currentTree[xtreepos];
-            }
-        }
-        if (debug)
-        	document.write("ret3");
-        return -1;
-    };
-    
-    function DeflateLoop() {
-    var last, c, type, i, len;
-
-    do {
-        /*if((last = readBit())){
-            fprintf(errfp, "Last Block: ");
-        } else {
-            fprintf(errfp, "Not Last Block: ");
-        }*/
-        last = readBit();
-        type = readBits(2);
-        switch(type) {
-            case 0:
-            	if (debug)
-                	alert("Stored\n");
-                break;
-            case 1:
-            	if (debug)
-                	alert("Fixed Huffman codes\n");
-                break;
-            case 2:
-            	if (debug)
-                	alert("Dynamic Huffman codes\n");
-                break;
-            case 3:
-            	if (debug)
-                	alert("Reserved block type!!\n");
-                break;
-            default:
-            	if (debug)
-                	alert("Unexpected value %d!\n", type);
-                break;
-        }
-
-        if(type==0) {
-            var blockLen, cSum;
-
-            // Stored 
-            byteAlign();
-            blockLen = readByte();
-            blockLen |= (readByte()<<8);
-
-            cSum = readByte();
-            cSum |= (readByte()<<8);
-
-            if(((blockLen ^ ~cSum) & 0xffff)) {
-                document.write("BlockLen checksum mismatch\n");
-            }
-            while(blockLen--) {
-                c = readByte();
-                addBuffer(c);
-            }
-        } else if(type==1) {
-            var j;
-
-            /* Fixed Huffman tables -- fixed decode routine */
-            while(1) {
-            /*
-                256    0000000        0
-                :   :     :
-                279    0010111        23
-                0   00110000    48
-                :    :      :
-                143    10111111    191
-                280 11000000    192
-                :    :      :
-                287 11000111    199
-                144    110010000    400
-                :    :       :
-                255    111111111    511
-    
-                Note the bit order!
-                */
-
-            j = (bitReverse[readBits(7)]>>1);
-            if(j > 23) {
-                j = (j<<1) | readBit();    /* 48..255 */
-
-                if(j > 199) {    /* 200..255 */
-                    j -= 128;    /*  72..127 */
-                    j = (j<<1) | readBit();        /* 144..255 << */
-                } else {        /*  48..199 */
-                    j -= 48;    /*   0..151 */
-                    if(j > 143) {
-                        j = j+136;    /* 280..287 << */
-                        /*   0..143 << */
-                    }
-                }
-            } else {    /*   0..23 */
-                j += 256;    /* 256..279 << */
-            }
-            if(j < 256) {
-                addBuffer(j);
-                //document.write("out:"+String.fromCharCode(j));
-                /*fprintf(errfp, "@%d %02x\n", SIZE, j);*/
-            } else if(j == 256) {
-                /* EOF */
-                break;
-            } else {
-                var len, dist;
-
-                j -= 256 + 1;    /* bytes + EOF */
-                len = readBits(cplext[j]) + cplens[j];
-
-                j = bitReverse[readBits(5)]>>3;
-                if(cpdext[j] > 8) {
-                    dist = readBits(8);
-                    dist |= (readBits(cpdext[j]-8)<<8);
-                } else {
-                    dist = readBits(cpdext[j]);
-                }
-                dist += cpdist[j];
-
-                /*fprintf(errfp, "@%d (l%02x,d%04x)\n", SIZE, len, dist);*/
-                for(j=0;j<len;j++) {
-                    var c = buf32k[(bIdx - dist) & 0x7fff];
-                    addBuffer(c);
-                }
-            }
-            } // while
-        } else if(type==2) {
-            var j, n, literalCodes, distCodes, lenCodes;
-            var ll = new Array(288+32);    // "static" just to preserve stack
-    
-            // Dynamic Huffman tables 
-    
-            literalCodes = 257 + readBits(5);
-            distCodes = 1 + readBits(5);
-            lenCodes = 4 + readBits(4);
-            //document.write("<br>param: "+literalCodes+" "+distCodes+" "+lenCodes+"<br>");
-            for(j=0; j<19; j++) {
-                ll[j] = 0;
-            }
-    
-            // Get the decode tree code lengths
-    
-            //document.write("<br>");
-            for(j=0; j<lenCodes; j++) {
-                ll[border[j]] = readBits(3);
-                //document.write(ll[border[j]]+" ");
-            }
-            //fprintf(errfp, "\n");
-            //document.write('<br>ll:'+ll);
-            len = distanceTree.length;
-            for (i=0; i<len; i++)
-                distanceTree[i]=new HufNode();
-            if(CreateTree(distanceTree, 19, ll, 0)) {
-                flushBuffer();
-                return 1;
-            }
-            if (debug){
-            	document.write("<br>distanceTree");
-            	for(var a=0;a<distanceTree.length;a++){
-                	document.write("<br>"+distanceTree[a].b0+" "+distanceTree[a].b1+" "+distanceTree[a].jump+" "+distanceTree[a].jumppos);
-                	/*if (distanceTree[a].jumppos!=-1)
-                    	document.write(" "+distanceTree[a].jump.b0+" "+distanceTree[a].jump.b1);
-                	*/
-            	}
-            }
-            //document.write('<BR>tree created');
-    
-            //read in literal and distance code lengths
-            n = literalCodes + distCodes;
-            i = 0;
-            var z=-1;
-            if (debug)
-            	document.write("<br>n="+n+" bits: "+bits+"<br>");
-            while(i < n) {
-                z++;
-                j = DecodeValue(distanceTree);
-                if (debug)
-                	document.write("<br>"+z+" i:"+i+" decode: "+j+"    bits "+bits+"<br>");
-                if(j<16) {    // length of code in bits (0..15)
-                       ll[i++] = j;
-                } else if(j==16) {    // repeat last length 3 to 6 times 
-                       var l;
-                    j = 3 + readBits(2);
-                    if(i+j > n) {
-                        flushBuffer();
-                        return 1;
-                    }
-                    l = i ? ll[i-1] : 0;
-                    while(j--) {
-                        ll[i++] = l;
-                    }
-                } else {
-                    if(j==17) {        // 3 to 10 zero length codes
-                        j = 3 + readBits(3);
-                    } else {        // j == 18: 11 to 138 zero length codes 
-                        j = 11 + readBits(7);
-                    }
-                    if(i+j > n) {
-                        flushBuffer();
-                        return 1;
-                    }
-                    while(j--) {
-                        ll[i++] = 0;
-                    }
-                }
-            }
-            /*for(j=0; j<literalCodes+distCodes; j++) {
-                //fprintf(errfp, "%d ", ll[j]);
-                if ((j&7)==7)
-                    fprintf(errfp, "\n");
-            }
-            fprintf(errfp, "\n");*/
-            // Can overwrite tree decode tree as it is not used anymore
-            len = literalTree.length;
-            for (i=0; i<len; i++)
-                literalTree[i]=new HufNode();
-            if(CreateTree(literalTree, literalCodes, ll, 0)) {
-                flushBuffer();
-                return 1;
-            }
-            len = literalTree.length;
-            for (i=0; i<len; i++)
-                distanceTree[i]=new HufNode();
-            var ll2 = new Array();
-            for (i=literalCodes; i <ll.length; i++){
-                ll2[i-literalCodes]=ll[i];
-            }    
-            if(CreateTree(distanceTree, distCodes, ll2, 0)) {
-                flushBuffer();
-                return 1;
-            }
-            if (debug)
-           		document.write("<br>literalTree");
-            while(1) {
-                j = DecodeValue(literalTree);
-                if(j >= 256) {        // In C64: if carry set
-                    var len, dist;
-                    j -= 256;
-                    if(j == 0) {
-                        // EOF
-                        break;
-                    }
-                    j--;
-                    len = readBits(cplext[j]) + cplens[j];
-    
-                    j = DecodeValue(distanceTree);
-                    if(cpdext[j] > 8) {
-                        dist = readBits(8);
-                        dist |= (readBits(cpdext[j]-8)<<8);
-                    } else {
-                        dist = readBits(cpdext[j]);
-                    }
-                    dist += cpdist[j];
-                    while(len--) {
-                        var c = buf32k[(bIdx - dist) & 0x7fff];
-                        addBuffer(c);
-                    }
-                } else {
-                    addBuffer(j);
-                }
-            }
-        }
-    } while(!last);
-    flushBuffer();
-
-    byteAlign();
-    return 0;
-};
-
-JXG.Util.Unzip.prototype.unzipFile = function(name) {
-    var i;
-	this.unzip();
-	//alert(unzipped[0][1]);
-	for (i=0;i<unzipped.length;i++){
-		if(unzipped[i][1]==name) {
-			return unzipped[i][0];
-		}
-	}
-	
-  };
-    
-    
-JXG.Util.Unzip.prototype.unzip = function() {
-	//convertToByteArray(input);
-	if (debug)
-		alert(bA);
-	/*for (i=0;i<bA.length*8;i++){
-		document.write(readBit());
-		if ((i+1)%8==0)
-			document.write(" ");
-	}*/
-	/*for (i=0;i<bA.length;i++){
-		document.write(readByte()+" ");
-		if ((i+1)%8==0)
-			document.write(" ");
-	}
-	for (i=0;i<bA.length;i++){
-		document.write(bA[i]+" ");
-		if ((i+1)%16==0)
-			document.write("<br>");
-	}	
-	*/
-	//alert(bA);
-	nextFile();
-	return unzipped;
-  };
-    
- function nextFile(){
- 	if (debug)
- 		alert("NEXTFILE");
- 	outputArr = [];
- 	var tmp = [];
- 	modeZIP = false;
-	tmp[0] = readByte();
-	tmp[1] = readByte();
-	if (debug)
-		alert("type: "+tmp[0]+" "+tmp[1]);
-	if (tmp[0] == parseInt("78",16) && tmp[1] == parseInt("da",16)){ //GZIP
-		if (debug)
-			alert("GEONExT-GZIP");
-		DeflateLoop();
-		if (debug)
-			alert(outputArr.join(''));
-		unzipped[files] = new Array(2);
-    	unzipped[files][0] = outputArr.join('');
-    	unzipped[files][1] = "geonext.gxt";
-    	files++;
-	}
-	if (tmp[0] == parseInt("1f",16) && tmp[1] == parseInt("8b",16)){ //GZIP
-		if (debug)
-			alert("GZIP");
-		//DeflateLoop();
-		skipdir();
-		if (debug)
-			alert(outputArr.join(''));
-		unzipped[files] = new Array(2);
-    	unzipped[files][0] = outputArr.join('');
-    	unzipped[files][1] = "file";
-    	files++;
-	}
-	if (tmp[0] == parseInt("50",16) && tmp[1] == parseInt("4b",16)){ //ZIP
-		modeZIP = true;
-		tmp[2] = readByte();
-		tmp[3] = readByte();
-		if (tmp[2] == parseInt("3",16) && tmp[3] == parseInt("4",16)){
-			//MODE_ZIP
-			tmp[0] = readByte();
-			tmp[1] = readByte();
-			if (debug)
-				alert("ZIP-Version: "+tmp[1]+" "+tmp[0]/10+"."+tmp[0]%10);
-			
-			gpflags = readByte();
-			gpflags |= (readByte()<<8);
-			if (debug)
-				alert("gpflags: "+gpflags);
-			
-			var method = readByte();
-			method |= (readByte()<<8);
-			if (debug)
-				alert("method: "+method);
-			
-			readByte();
-			readByte();
-			readByte();
-			readByte();
-			
-			var crc = readByte();
-			crc |= (readByte()<<8);
-			crc |= (readByte()<<16);
-			crc |= (readByte()<<24);
-			
-			var compSize = readByte();
-			compSize |= (readByte()<<8);
-			compSize |= (readByte()<<16);
-			compSize |= (readByte()<<24);
-			
-			var size = readByte();
-			size |= (readByte()<<8);
-			size |= (readByte()<<16);
-			size |= (readByte()<<24);
-			
-			if (debug)
-				alert("local CRC: "+crc+"\nlocal Size: "+size+"\nlocal CompSize: "+compSize);
-			
-			var filelen = readByte();
-			filelen |= (readByte()<<8);
-			
-			var extralen = readByte();
-			extralen |= (readByte()<<8);
-			
-			if (debug)
-				alert("filelen "+filelen);
-			i = 0;
-			nameBuf = [];
-			while (filelen--){ 
-				var c = readByte();
-				if (c == "/" | c ==":"){
-					i = 0;
-				} else if (i < NAMEMAX-1)
-					nameBuf[i++] = String.fromCharCode(c);
-			}
-			if (debug)
-				alert("nameBuf: "+nameBuf);
-			
-			//nameBuf[i] = "\0";
-			if (!fileout)
-				fileout = nameBuf;
-			
-			var i = 0;
-			while (i < extralen){
-				c = readByte();
-				i++;
-			}
-				
-			CRC = 0xffffffff;
-			SIZE = 0;
-			
-			if (size = 0 && fileOut.charAt(fileout.length-1)=="/"){
-				//skipdir
-				if (debug)
-					alert("skipdir");
-			}
-			if (method == 8){
-				DeflateLoop();
-				if (debug)
-					alert(outputArr.join(''));
-				unzipped[files] = new Array(2);
-				unzipped[files][0] = outputArr.join('');
-    			unzipped[files][1] = nameBuf.join('');
-    			files++;
-				//return outputArr.join('');
-			}
-			skipdir();
-		}
-	}
- };
-	
-function skipdir(){
-    var crc, 
-        tmp = [],
-        compSize, size, os, i, c;
-    
-	if ((gpflags & 8)) {
-		tmp[0] = readByte();
-		tmp[1] = readByte();
-		tmp[2] = readByte();
-		tmp[3] = readByte();
-		
-		if (tmp[0] == parseInt("50",16) && 
-            tmp[1] == parseInt("4b",16) && 
-            tmp[2] == parseInt("07",16) && 
-            tmp[3] == parseInt("08",16))
-        {
-            crc = readByte();
-            crc |= (readByte()<<8);
-            crc |= (readByte()<<16);
-            crc |= (readByte()<<24);
-		} else {
-			crc = tmp[0] | (tmp[1]<<8) | (tmp[2]<<16) | (tmp[3]<<24);
-		}
-		
-		compSize = readByte();
-		compSize |= (readByte()<<8);
-		compSize |= (readByte()<<16);
-		compSize |= (readByte()<<24);
-		
-		size = readByte();
-		size |= (readByte()<<8);
-		size |= (readByte()<<16);
-		size |= (readByte()<<24);
-		
-		if (debug)
-			alert("CRC:");
-	}
-
-	if (modeZIP)
-		nextFile();
-	
-	tmp[0] = readByte();
-	if (tmp[0] != 8) {
-		if (debug)
-			alert("Unknown compression method!");
-        return 0;	
-	}
-	
-	gpflags = readByte();
-	if (debug){
-		if ((gpflags & ~(parseInt("1f",16))))
-			alert("Unknown flags set!");
-	}
-	
-	readByte();
-	readByte();
-	readByte();
-	readByte();
-	
-	readByte();
-	os = readByte();
-	
-	if ((gpflags & 4)){
-		tmp[0] = readByte();
-		tmp[2] = readByte();
-		len = tmp[0] + 256*tmp[1];
-		if (debug)
-			alert("Extra field size: "+len);
-		for (i=0;i<len;i++)
-			readByte();
-	}
-	
-	if ((gpflags & 8)){
-		i=0;
-		nameBuf=[];
-		while (c=readByte()){
-			if(c == "7" || c == ":")
-				i=0;
-			if (i<NAMEMAX-1)
-				nameBuf[i++] = c;
-		}
-		//nameBuf[i] = "\0";
-		if (debug)
-			alert("original file name: "+nameBuf);
-	}
-		
-	if ((gpflags & 16)){
-		while (c=readByte()){
-			//FILE COMMENT
-		}
-	}
-	
-	if ((gpflags & 2)){
-		readByte();
-		readByte();
-	}
-	
-	DeflateLoop();
-	
-	crc = readByte();
-	crc |= (readByte()<<8);
-	crc |= (readByte()<<16);
-	crc |= (readByte()<<24);
-	
-	size = readByte();
-	size |= (readByte()<<8);
-	size |= (readByte()<<16);
-	size |= (readByte()<<24);
-	
-	if (modeZIP)
-		nextFile();
-	
-};
-
-};
-
-/**
-*  Base64 encoding / decoding
-*  @see <a href="http://www.webtoolkit.info/">http://www.webtoolkit.info/</A>
-*/
-JXG.Util.Base64 = {
-
-    // private property
-    _keyStr : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
-
-    // public method for encoding
-    encode : function (input) {
-        var output = [],
-            chr1, chr2, chr3, enc1, enc2, enc3, enc4,
-            i = 0;
-
-        input = JXG.Util.Base64._utf8_encode(input);
-
-        while (i < input.length) {
-
-            chr1 = input.charCodeAt(i++);
-            chr2 = input.charCodeAt(i++);
-            chr3 = input.charCodeAt(i++);
-
-            enc1 = chr1 >> 2;
-            enc2 = ((chr1 & 3) << 4) | (chr2 >> 4);
-            enc3 = ((chr2 & 15) << 2) | (chr3 >> 6);
-            enc4 = chr3 & 63;
-
-            if (isNaN(chr2)) {
-                enc3 = enc4 = 64;
-            } else if (isNaN(chr3)) {
-                enc4 = 64;
-            }
-
-            output.push([this._keyStr.charAt(enc1),
-                         this._keyStr.charAt(enc2),
-                         this._keyStr.charAt(enc3),
-                         this._keyStr.charAt(enc4)].join(''));
-        }
-
-        return output.join('');
+var base64 = {
+    /**
+     * Decode a base64 encoded string into a binary string
+     *
+     * @param {String} input Base64 encoded data
+     * @returns {String} Binary string
+     */
+    decode: function(input) {
+        return JXG.Util.Base64.decode(input);
     },
 
-    // public method for decoding
-    decode : function (input, utf8) {
-        var output = [],
-            chr1, chr2, chr3,
-            enc1, enc2, enc3, enc4,
-            i = 0;
+    /**
+     * Decode a base64 encoded string into a byte array
+     *
+     * @param {String} input Base64 encoded data
+     * @returns {Integer[]} Array of bytes
+     */
+    decodeAsArray: function(input, bytes) {
+        bytes = bytes || 1;
 
-        input = input.replace(/[^A-Za-z0-9\+\/\=]/g, "");
+        var dec = JXG.Util.Base64.decode(input),
+            ar = [], i, j, len;
 
-        while (i < input.length) {
-
-            enc1 = this._keyStr.indexOf(input.charAt(i++));
-            enc2 = this._keyStr.indexOf(input.charAt(i++));
-            enc3 = this._keyStr.indexOf(input.charAt(i++));
-            enc4 = this._keyStr.indexOf(input.charAt(i++));
-
-            chr1 = (enc1 << 2) | (enc2 >> 4);
-            chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
-            chr3 = ((enc3 & 3) << 6) | enc4;
-
-            output.push(String.fromCharCode(chr1));
-
-            if (enc3 != 64) {
-                output.push(String.fromCharCode(chr2));
+        for (i = 0, len = dec.length/bytes; i < len; i++){
+            ar[i] = 0;
+            for (j = bytes-1; j >= 0; --j){
+                ar[i] += dec.charCodeAt((i *bytes) +j) << (j *8);
             }
-            if (enc4 != 64) {
-                output.push(String.fromCharCode(chr3));
-            }
-        }
-        
-        output = output.join(''); 
-        
-        if (utf8) {
-            output = JXG.Util.Base64._utf8_decode(output);
-        }
-        return output;
-
-    },
-
-    // private method for UTF-8 encoding
-    _utf8_encode : function (string) {
-        string = string.replace(/\r\n/g,"\n");
-        var utftext = "";
-
-        for (var n = 0; n < string.length; n++) {
-
-            var c = string.charCodeAt(n);
-
-            if (c < 128) {
-                utftext += String.fromCharCode(c);
-            }
-            else if((c > 127) && (c < 2048)) {
-                utftext += String.fromCharCode((c >> 6) | 192);
-                utftext += String.fromCharCode((c & 63) | 128);
-            }
-            else {
-                utftext += String.fromCharCode((c >> 12) | 224);
-                utftext += String.fromCharCode(((c >> 6) & 63) | 128);
-                utftext += String.fromCharCode((c & 63) | 128);
-            }
-
-        }
-
-        return utftext;
-    },
-
-    // private method for UTF-8 decoding
-    _utf8_decode : function (utftext) {
-        var string = [],
-            i = 0,
-            c = 0, c2 = 0, c3 = 0;
-
-        while ( i < utftext.length ) {
-            c = utftext.charCodeAt(i);
-            if (c < 128) {
-                string.push(String.fromCharCode(c));
-                i++;
-            }
-            else if((c > 191) && (c < 224)) {
-                c2 = utftext.charCodeAt(i+1);
-                string.push(String.fromCharCode(((c & 31) << 6) | (c2 & 63)));
-                i += 2;
-            }
-            else {
-                c2 = utftext.charCodeAt(i+1);
-                c3 = utftext.charCodeAt(i+2);
-                string.push(String.fromCharCode(((c & 15) << 12) | ((c2 & 63) << 6) | (c3 & 63)));
-                i += 3;
-            }
-        }
-        return string.join('');
-    },
-    
-    _destrip: function (stripped, wrap){
-        var lines = [], lineno, i,
-            destripped = [];
-        
-        if (wrap==null) 
-            wrap = 76;
-            
-        stripped.replace(/ /g, "");
-        lineno = stripped.length / wrap;
-        for (i = 0; i < lineno; i++)
-            lines[i]=stripped.substr(i * wrap, wrap);
-        if (lineno != stripped.length / wrap)
-            lines[lines.length]=stripped.substr(lineno * wrap, stripped.length-(lineno * wrap));
-            
-        for (i = 0; i < lines.length; i++)
-            destripped.push(lines[i]);
-        return destripped.join('\n');
-    },
-    
-    decodeAsArray: function (input){
-        var dec = this.decode(input),
-            ar = [], i;
-        for (i=0;i<dec.length;i++){
-            ar[i]=dec.charCodeAt(i);
         }
         return ar;
     },
-    
-    decodeGEONExT : function (input) {
-        return decodeAsArray(destrip(input),false);
+
+    /**
+     * Encode a binary string into base64
+     *
+     * @param {String} input Binary string
+     * @returns {String} Base64 encoded data
+     */
+    encode: function(input) {
+        return JXG.Util.Base64.encode(input);
     }
 };
 
-/**
- * @private
- */
-JXG.Util.asciiCharCodeAt = function(str,i){
-	var c = str.charCodeAt(i);
-	if (c>255){
-    	switch (c) {
-			case 8364: c=128;
-	    	break;
-	    	case 8218: c=130;
-	    	break;
-	    	case 402: c=131;
-	    	break;
-	    	case 8222: c=132;
-	    	break;
-	    	case 8230: c=133;
-	    	break;
-	    	case 8224: c=134;
-	    	break;
-	    	case 8225: c=135;
-	    	break;
-	    	case 710: c=136;
-	    	break;
-	    	case 8240: c=137;
-	    	break;
-	    	case 352: c=138;
-	    	break;
-	    	case 8249: c=139;
-	    	break;
-	    	case 338: c=140;
-	    	break;
-	    	case 381: c=142;
-	    	break;
-	    	case 8216: c=145;
-	    	break;
-	    	case 8217: c=146;
-	    	break;
-	    	case 8220: c=147;
-	    	break;
-	    	case 8221: c=148;
-	    	break;
-	    	case 8226: c=149;
-	    	break;
-	    	case 8211: c=150;
-	    	break;
-	    	case 8212: c=151;
-	    	break;
-	    	case 732: c=152;
-	    	break;
-	    	case 8482: c=153;
-	    	break;
-	    	case 353: c=154;
-	    	break;
-	    	case 8250: c=155;
-	    	break;
-	    	case 339: c=156;
-	    	break;
-	    	case 382: c=158;
-	    	break;
-	    	case 376: c=159;
-	    	break;
-	    	default:
-	    	break;
-	    }
-	}
-	return c;
-};
+module.exports = base64;
 
-/**
- * Decoding string into utf-8
- * @param {String} string to decode
- * @return {String} utf8 decoded string
- */
-JXG.Util.utf8Decode = function(utftext) {
-  var string = [];
-  var i = 0;
-  var c = 0, c1 = 0, c2 = 0;
-
-  while ( i < utftext.length ) {
-    c = utftext.charCodeAt(i);
-
-    if (c < 128) {
-      string.push(String.fromCharCode(c));
-      i++;
-    } else if((c > 191) && (c < 224)) {
-      c2 = utftext.charCodeAt(i+1);
-      string.push(String.fromCharCode(((c & 31) << 6) | (c2 & 63)));
-      i += 2;
-    } else {
-      c2 = utftext.charCodeAt(i+1);
-      c3 = utftext.charCodeAt(i+2);
-      string.push(String.fromCharCode(((c & 15) << 12) | ((c2 & 63) << 6) | (c3 & 63)));
-      i += 3;
-    }
-  };
-  return string.join('');
-};
-
-// Added to exports for Cocos2d
-module.exports = JXG;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/JXGUtil.js
-
-
-__jah__.resources["/libs/cocos2d/libs/Plist.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/** @ignore
- * XML Node types
- */
-var ELEMENT_NODE                = 1,
-    ATTRIBUTE_NODE              = 2,
-    TEXT_NODE                   = 3,
-    CDATA_SECTION_NODE          = 4,
-    ENTITY_REFERENCE_NODE       = 5,
-    ENTITY_NODE                 = 6,
-    PROCESSING_INSTRUCTION_NODE = 7,
-    COMMENT_NODE                = 8,
-    DOCUMENT_NODE               = 9,
-    DOCUMENT_TYPE_NODE          = 10,
-    DOCUMENT_FRAGMENT_NODE      = 11,
-    NOTATION_NODE               = 12;
-
-
-var Plist = BObject.extend (/** @lends Plist# */{
-    /**
-     * The unserialized data inside the Plist file
-     * @type Object
-     */
-    data: null,
-
-    /**
-     * An object representation of an XML Property List file
-     *
-     * @constructs
-     * @extends BObject
-     * @param {Options} opts Options
-     * @config {String} [file] The path to a .plist file
-     * @config {String} [data] The contents of a .plist file
-     */
-    init: function(opts) {
-        var file = opts['file'],
-            data = opts['data'];
-
-        if (file && !data) {
-            data = resource(file);
-        }
-
-
-        var parser = new DOMParser(),
-            doc = parser.parseFromString(data, 'text/xml'),
-            plist = doc.documentElement;
-
-        if (plist.tagName != 'plist') {
-            throw "Not a plist file";
-        }
-
-
-        // Get first real node
-        var node = null;
-        for (var i = 0, len = plist.childNodes.length; i < len; i++) {
-            node = plist.childNodes[i];
-            if (node.nodeType == ELEMENT_NODE) {
-                break;
-            }
-        }
-
-        this.set('data', this.parseNode_(node));
-    },
-
-
-    /**
-     * @private
-     * Parses an XML node inside the Plist file
-     * @returns {Object/Array/String/Integer/Float} A JS representation of the node value
-     */
-    parseNode_: function(node) {
-        var data = null;
-        switch(node.tagName) {
-        case 'dict':
-            data = this.parseDict_(node); 
-            break;
-        case 'array':
-            data = this.parseArray_(node); 
-            break;
-        case 'string':
-            // FIXME - This needs to handle Firefox's 4KB nodeValue limit
-            data = node.firstChild.nodeValue;
-            break
-        case 'false':
-            data = false;
-            break
-        case 'true':
-            data = true;
-            break
-        case 'real':
-            data = parseFloat(node.firstChild.nodeValue);
-            break
-        case 'integer':
-            data = parseInt(node.firstChild.nodeValue, 10);
-            break
-        }
-
-        return data;
-    },
-
-    /**
-     * @private
-     * Parses a <dict> node in a plist file
-     *
-     * @param {XMLElement}
-     * @returns {Object} A simple key/value JS Object representing the <dict>
-     */
-    parseDict_: function(node) {
-        var data = {};
-
-        var key = null;
-        for (var i = 0, len = node.childNodes.length; i < len; i++) {
-            var child = node.childNodes[i];
-            if (child.nodeType != ELEMENT_NODE) {
-                continue;
-            }
-
-            // Grab the key, next noe should be the value
-            if (child.tagName == 'key') {
-                key = child.firstChild.nodeValue;
-            } else {
-                // Parse the value node
-                data[key] = this.parseNode_(child);
-            }
-        }
-
-
-        return data;
-    },
-
-    /**
-     * @private
-     * Parses an <array> node in a plist file
-     *
-     * @param {XMLElement}
-     * @returns {Array} A simple JS Array representing the <array>
-     */
-    parseArray_: function(node) {
-        var data = [];
-
-        for (var i = 0, len = node.childNodes.length; i < len; i++) {
-            var child = node.childNodes[i];
-            if (child.nodeType != ELEMENT_NODE) {
-                continue;
-            }
-
-            data.push(this.parseNode_(child));
-        }
-
-        return data;
-    }
-});
-
-
-exports.Plist = Plist;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/Plist.js
-
-
-__jah__.resources["/libs/cocos2d/libs/qunit.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*
- * QUnit - A JavaScript Unit Testing Framework
- * 
- * http://docs.jquery.com/QUnit
- *
- * Copyright (c) 2011 John Resig, Jörn Zaefferer
- * Dual licensed under the MIT (MIT-LICENSE.txt)
- * or GPL (GPL-LICENSE.txt) licenses.
- */
-
-(function(window) {
-
-var defined = {
-	setTimeout: typeof window.setTimeout !== "undefined",
-	sessionStorage: (function() {
-		try {
-			return !!sessionStorage.getItem;
-		} catch(e){
-			return false;
-		}
-  })()
-}
-
-var testId = 0;
-
-var Test = function(name, testName, expected, testEnvironmentArg, async, callback) {
-	this.name = name;
-	this.testName = testName;
-	this.expected = expected;
-	this.testEnvironmentArg = testEnvironmentArg;
-	this.async = async;
-	this.callback = callback;
-	this.assertions = [];
-};
-Test.prototype = {
-	init: function() {
-		var tests = id("qunit-tests");
-		if (tests) {
-			var b = document.createElement("strong");
-				b.innerHTML = "Running " + this.name;
-			var li = document.createElement("li");
-				li.appendChild( b );
-				li.id = this.id = "test-output" + testId++;
-			tests.appendChild( li );
-		}
-	},
-	setup: function() {
-		if (this.module != config.previousModule) {
-			if ( config.previousModule ) {
-				QUnit.moduleDone( {
-					name: config.previousModule,
-					failed: config.moduleStats.bad,
-					passed: config.moduleStats.all - config.moduleStats.bad,
-					total: config.moduleStats.all
-				} );
-			}
-			config.previousModule = this.module;
-			config.moduleStats = { all: 0, bad: 0 };
-			QUnit.moduleStart( {
-				name: this.module
-			} );
-		}
-
-		config.current = this;
-		this.testEnvironment = extend({
-			setup: function() {},
-			teardown: function() {}
-		}, this.moduleTestEnvironment);
-		if (this.testEnvironmentArg) {
-			extend(this.testEnvironment, this.testEnvironmentArg);
-		}
-
-		QUnit.testStart( {
-			name: this.testName
-		} );
-
-		// allow utility functions to access the current test environment
-		// TODO why??
-		QUnit.current_testEnvironment = this.testEnvironment;
-		
-		try {
-			if ( !config.pollution ) {
-				saveGlobal();
-			}
-
-			this.testEnvironment.setup.call(this.testEnvironment);
-		} catch(e) {
-			QUnit.ok( false, "Setup failed on " + this.testName + ": " + e.message );
-		}
-	},
-	run: function() {
-		if ( this.async ) {
-			QUnit.stop();
-		}
-
-		if ( config.notrycatch ) {
-			this.callback.call(this.testEnvironment);
-			return;
-		}
-		try {
-			this.callback.call(this.testEnvironment);
-		} catch(e) {
-			fail("Test " + this.testName + " died, exception and test follows", e, this.callback);
-			QUnit.ok( false, "Died on test #" + (this.assertions.length + 1) + ": " + e.message + " - " + QUnit.jsDump.parse(e) );
-			// else next test will carry the responsibility
-			saveGlobal();
-
-			// Restart the tests if they're blocking
-			if ( config.blocking ) {
-				start();
-			}
-		}
-	},
-	teardown: function() {
-		try {
-			checkPollution();
-			this.testEnvironment.teardown.call(this.testEnvironment);
-		} catch(e) {
-			QUnit.ok( false, "Teardown failed on " + this.testName + ": " + e.message );
-		}
-	},
-	finish: function() {
-		if ( this.expected && this.expected != this.assertions.length ) {
-			QUnit.ok( false, "Expected " + this.expected + " assertions, but " + this.assertions.length + " were run" );
-		}
-		
-		var good = 0, bad = 0,
-			tests = id("qunit-tests");
-
-		config.stats.all += this.assertions.length;
-		config.moduleStats.all += this.assertions.length;
-
-		if ( tests ) {
-			var ol  = document.createElement("ol");
-
-			for ( var i = 0; i < this.assertions.length; i++ ) {
-				var assertion = this.assertions[i];
-
-				var li = document.createElement("li");
-				li.className = assertion.result ? "pass" : "fail";
-				li.innerHTML = assertion.message || (assertion.result ? "okay" : "failed");
-				ol.appendChild( li );
-
-				if ( assertion.result ) {
-					good++;
-				} else {
-					bad++;
-					config.stats.bad++;
-					config.moduleStats.bad++;
-				}
-			}
-
-			// store result when possible
-			defined.sessionStorage && sessionStorage.setItem("qunit-" + this.testName, bad);
-
-			if (bad == 0) {
-				ol.style.display = "none";
-			}
-
-			var b = document.createElement("strong");
-			b.innerHTML = this.name + " <b class='counts'>(<b class='failed'>" + bad + "</b>, <b class='passed'>" + good + "</b>, " + this.assertions.length + ")</b>";
-			
-			addEvent(b, "click", function() {
-				var next = b.nextSibling, display = next.style.display;
-				next.style.display = display === "none" ? "block" : "none";
-			});
-			
-			addEvent(b, "dblclick", function(e) {
-				var target = e && e.target ? e.target : window.event.srcElement;
-				if ( target.nodeName.toLowerCase() == "span" || target.nodeName.toLowerCase() == "b" ) {
-					target = target.parentNode;
-				}
-				if ( window.location && target.nodeName.toLowerCase() === "strong" ) {
-					window.location.search = "?" + encodeURIComponent(getText([target]).replace(/\(.+\)$/, "").replace(/(^\s*|\s*$)/g, ""));
-				}
-			});
-
-			var li = id(this.id);
-			li.className = bad ? "fail" : "pass";
-			li.style.display = resultDisplayStyle(!bad);
-			li.removeChild( li.firstChild );
-			li.appendChild( b );
-			li.appendChild( ol );
-
-		} else {
-			for ( var i = 0; i < this.assertions.length; i++ ) {
-				if ( !this.assertions[i].result ) {
-					bad++;
-					config.stats.bad++;
-					config.moduleStats.bad++;
-				}
-			}
-		}
-
-		try {
-			QUnit.reset();
-		} catch(e) {
-			fail("reset() failed, following Test " + this.testName + ", exception and reset fn follows", e, QUnit.reset);
-		}
-
-		QUnit.testDone( {
-			name: this.testName,
-			failed: bad,
-			passed: this.assertions.length - bad,
-			total: this.assertions.length
-		} );
-	},
-	
-	queue: function() {
-		var test = this;
-		synchronize(function() {
-			test.init();
-		});
-		function run() {
-			// each of these can by async
-			synchronize(function() {
-				test.setup();
-			});
-			synchronize(function() {
-				test.run();
-			});
-			synchronize(function() {
-				test.teardown();
-			});
-			synchronize(function() {
-				test.finish();
-			});
-		}
-		// defer when previous test run passed, if storage is available
-		var bad = defined.sessionStorage && +sessionStorage.getItem("qunit-" + this.testName);
-		if (bad) {
-			run();
-		} else {
-			synchronize(run);
-		};
-	}
-	
-}
-
-var QUnit = {
-
-	// call on start of module test to prepend name to all tests
-	module: function(name, testEnvironment) {
-		config.currentModule = name;
-		config.currentModuleTestEnviroment = testEnvironment;
-	},
-
-	asyncTest: function(testName, expected, callback) {
-		if ( arguments.length === 2 ) {
-			callback = expected;
-			expected = 0;
-		}
-
-		QUnit.test(testName, expected, callback, true);
-	},
-	
-	test: function(testName, expected, callback, async) {
-		var name = '<span class="test-name">' + testName + '</span>', testEnvironmentArg;
-
-		if ( arguments.length === 2 ) {
-			callback = expected;
-			expected = null;
-		}
-		// is 2nd argument a testEnvironment?
-		if ( expected && typeof expected === 'object') {
-			testEnvironmentArg =  expected;
-			expected = null;
-		}
-
-		if ( config.currentModule ) {
-			name = '<span class="module-name">' + config.currentModule + "</span>: " + name;
-		}
-
-		if ( !validTest(config.currentModule + ": " + testName) ) {
-			return;
-		}
-		
-		var test = new Test(name, testName, expected, testEnvironmentArg, async, callback);
-		test.module = config.currentModule;
-		test.moduleTestEnvironment = config.currentModuleTestEnviroment;
-		test.queue();
-	},
-	
-	/**
-	 * Specify the number of expected assertions to gurantee that failed test (no assertions are run at all) don't slip through.
-	 */
-	expect: function(asserts) {
-		config.current.expected = asserts;
-	},
-
-	/**
-	 * Asserts true.
-	 * @example ok( "asdfasdf".length > 5, "There must be at least 5 chars" );
-	 */
-	ok: function(a, msg) {
-		a = !!a;
-		var details = {
-			result: a,
-			message: msg
-		};
-		msg = escapeHtml(msg);
-		QUnit.log(details);
-		config.current.assertions.push({
-			result: a,
-			message: msg
-		});
-	},
-
-	/**
-	 * Checks that the first two arguments are equal, with an optional message.
-	 * Prints out both actual and expected values.
-	 *
-	 * Prefered to ok( actual == expected, message )
-	 *
-	 * @example equal( format("Received {0} bytes.", 2), "Received 2 bytes." );
-	 *
-	 * @param Object actual
-	 * @param Object expected
-	 * @param String message (optional)
-	 */
-	equal: function(actual, expected, message) {
-		QUnit.push(expected == actual, actual, expected, message);
-	},
-
-	notEqual: function(actual, expected, message) {
-		QUnit.push(expected != actual, actual, expected, message);
-	},
-	
-	deepEqual: function(actual, expected, message) {
-		QUnit.push(QUnit.equiv(actual, expected), actual, expected, message);
-	},
-
-	notDeepEqual: function(actual, expected, message) {
-		QUnit.push(!QUnit.equiv(actual, expected), actual, expected, message);
-	},
-
-	strictEqual: function(actual, expected, message) {
-		QUnit.push(expected === actual, actual, expected, message);
-	},
-
-	notStrictEqual: function(actual, expected, message) {
-		QUnit.push(expected !== actual, actual, expected, message);
-	},
-
-	raises: function(block, expected, message) {
-		var actual, ok = false;
-	
-		if (typeof expected === 'string') {
-			message = expected;
-			expected = null;
-		}
-	
-		try {
-			block();
-		} catch (e) {
-			actual = e;
-		}
-	
-		if (actual) {
-			// we don't want to validate thrown error
-			if (!expected) {
-				ok = true;
-			// expected is a regexp	
-			} else if (QUnit.objectType(expected) === "regexp") {
-				ok = expected.test(actual);
-			// expected is a constructor	
-			} else if (actual instanceof expected) {
-				ok = true;
-			// expected is a validation function which returns true is validation passed	
-			} else if (expected.call({}, actual) === true) {
-				ok = true;
-			}
-		}
-			
-		QUnit.ok(ok, message);
-	},
-
-	start: function() {
-		config.semaphore--;
-		if (config.semaphore > 0) {
-			// don't start until equal number of stop-calls
-			return;
-		}
-		if (config.semaphore < 0) {
-			// ignore if start is called more often then stop
-			config.semaphore = 0;
-		}
-		// A slight delay, to avoid any current callbacks
-		if ( defined.setTimeout ) {
-			window.setTimeout(function() {
-				if ( config.timeout ) {
-					clearTimeout(config.timeout);
-				}
-
-				config.blocking = false;
-				process();
-			}, 13);
-		} else {
-			config.blocking = false;
-			process();
-		}
-	},
-	
-	stop: function(timeout) {
-		config.semaphore++;
-		config.blocking = true;
-
-		if ( timeout && defined.setTimeout ) {
-			clearTimeout(config.timeout);
-			config.timeout = window.setTimeout(function() {
-				QUnit.ok( false, "Test timed out" );
-				QUnit.start();
-			}, timeout);
-		}
-	}
-
-};
-
-// Backwards compatibility, deprecated
-QUnit.equals = QUnit.equal;
-QUnit.same = QUnit.deepEqual;
-
-// Maintain internal state
-var config = {
-	// The queue of tests to run
-	queue: [],
-
-	// block until document ready
-	blocking: true
-};
-
-// Load paramaters
-(function() {
-	var location = window.location || { search: "", protocol: "file:" },
-		GETParams = location.search.slice(1).split('&');
-
-	for ( var i = 0; i < GETParams.length; i++ ) {
-		GETParams[i] = decodeURIComponent( GETParams[i] );
-		if ( GETParams[i] === "noglobals" ) {
-			GETParams.splice( i, 1 );
-			i--;
-			config.noglobals = true;
-		} else if ( GETParams[i] === "notrycatch" ) {
-			GETParams.splice( i, 1 );
-			i--;
-			config.notrycatch = true;
-		} else if ( GETParams[i].search('=') > -1 ) {
-			GETParams.splice( i, 1 );
-			i--;
-		}
-	}
-	
-	// restrict modules/tests by get parameters
-	config.filters = GETParams;
-	
-	// Figure out if we're running the tests from a server or not
-	QUnit.isLocal = !!(location.protocol === 'file:');
-})();
-
-// Expose the API as global variables, unless an 'exports'
-// object exists, in that case we assume we're in CommonJS
-if ( typeof exports === "undefined" || typeof require === "undefined" ) {
-	extend(window, QUnit);
-	window.QUnit = QUnit;
-} else {
-	extend(exports, QUnit);
-	exports.QUnit = QUnit;
-}
-
-// define these after exposing globals to keep them in these QUnit namespace only
-extend(QUnit, {
-	config: config,
-
-	// Initialize the configuration options
-	init: function() {
-		extend(config, {
-			stats: { all: 0, bad: 0 },
-			moduleStats: { all: 0, bad: 0 },
-			started: +new Date,
-			updateRate: 1000,
-			blocking: false,
-			autostart: true,
-			autorun: false,
-			filters: [],
-			queue: [],
-			semaphore: 0
-		});
-
-		var tests = id("qunit-tests"),
-			banner = id("qunit-banner"),
-			result = id("qunit-testresult");
-
-		if ( tests ) {
-			tests.innerHTML = "";
-		}
-
-		if ( banner ) {
-			banner.className = "";
-		}
-
-		if ( result ) {
-			result.parentNode.removeChild( result );
-		}
-	},
-	
-	/**
-	 * Resets the test setup. Useful for tests that modify the DOM.
-	 * 
-	 * If jQuery is available, uses jQuery's html(), otherwise just innerHTML.
-	 */
-	reset: function() {
-		if ( window.jQuery ) {
-			jQuery( "#main, #qunit-fixture" ).html( config.fixture );
-		} else {
-			var main = id( 'main' ) || id( 'qunit-fixture' );
-			if ( main ) {
-				main.innerHTML = config.fixture;
-			}
-		}
-	},
-	
-	/**
-	 * Trigger an event on an element.
-	 *
-	 * @example triggerEvent( document.body, "click" );
-	 *
-	 * @param DOMElement elem
-	 * @param String type
-	 */
-	triggerEvent: function( elem, type, event ) {
-		if ( document.createEvent ) {
-			event = document.createEvent("MouseEvents");
-			event.initMouseEvent(type, true, true, elem.ownerDocument.defaultView,
-				0, 0, 0, 0, 0, false, false, false, false, 0, null);
-			elem.dispatchEvent( event );
-
-		} else if ( elem.fireEvent ) {
-			elem.fireEvent("on"+type);
-		}
-	},
-	
-	// Safe object type checking
-	is: function( type, obj ) {
-		return QUnit.objectType( obj ) == type;
-	},
-	
-	objectType: function( obj ) {
-		if (typeof obj === "undefined") {
-				return "undefined";
-
-		// consider: typeof null === object
-		}
-		if (obj === null) {
-				return "null";
-		}
-
-		var type = Object.prototype.toString.call( obj )
-			.match(/^\[object\s(.*)\]$/)[1] || '';
-
-		switch (type) {
-				case 'Number':
-						if (isNaN(obj)) {
-								return "nan";
-						} else {
-								return "number";
-						}
-				case 'String':
-				case 'Boolean':
-				case 'Array':
-				case 'Date':
-				case 'RegExp':
-				case 'Function':
-						return type.toLowerCase();
-		}
-		if (typeof obj === "object") {
-				return "object";
-		}
-		return undefined;
-	},
-	
-	push: function(result, actual, expected, message) {
-		var details = {
-			result: result,
-			message: message,
-			actual: actual,
-			expected: expected
-		};
-		
-		message = escapeHtml(message) || (result ? "okay" : "failed");
-		message = '<span class="test-message">' + message + "</span>";
-		expected = escapeHtml(QUnit.jsDump.parse(expected));
-		actual = escapeHtml(QUnit.jsDump.parse(actual));
-		var output = message + '<table><tr class="test-expected"><th>Expected: </th><td><pre>' + expected + '</pre></td></tr>';
-		if (actual != expected) {
-			output += '<tr class="test-actual"><th>Result: </th><td><pre>' + actual + '</pre></td></tr>';
-			output += '<tr class="test-diff"><th>Diff: </th><td><pre>' + QUnit.diff(expected, actual) +'</pre></td></tr>';
-		}
-		if (!result) {
-			var source = sourceFromStacktrace();
-			if (source) {
-				details.source = source;
-				output += '<tr class="test-source"><th>Source: </th><td><pre>' + source +'</pre></td></tr>';
-			}
-		}
-		output += "</table>";
-		
-		QUnit.log(details);
-		
-		config.current.assertions.push({
-			result: !!result,
-			message: output
-		});
-	},
-	
-	// Logging callbacks; all receive a single argument with the listed properties
-	// run test/logs.html for any related changes
-	begin: function() {},
-	// done: { failed, passed, total, runtime }
-	done: function() {},
-	// log: { result, actual, expected, message }
-	log: function() {},
-	// testStart: { name }
-	testStart: function() {},
-	// testDone: { name, failed, passed, total }
-	testDone: function() {},
-	// moduleStart: { name }
-	moduleStart: function() {},
-	// moduleDone: { name, failed, passed, total }
-	moduleDone: function() {}
-});
-
-if ( typeof document === "undefined" || document.readyState === "complete" ) {
-	config.autorun = true;
-}
-
-addEvent(window, "load", function() {
-	QUnit.begin({});
-	
-	// Initialize the config, saving the execution queue
-	var oldconfig = extend({}, config);
-	QUnit.init();
-	extend(config, oldconfig);
-
-	config.blocking = false;
-
-	var userAgent = id("qunit-userAgent");
-	if ( userAgent ) {
-		userAgent.innerHTML = navigator.userAgent;
-	}
-	var banner = id("qunit-header");
-	if ( banner ) {
-		var paramsIndex = location.href.lastIndexOf(location.search);
-		if ( paramsIndex > -1 ) {
-			var mainPageLocation = location.href.slice(0, paramsIndex);
-			if ( mainPageLocation == location.href ) {
-				banner.innerHTML = '<a href=""> ' + banner.innerHTML + '</a> ';
-			} else {
-				var testName = decodeURIComponent(location.search.slice(1));
-				banner.innerHTML = '<a href="' + mainPageLocation + '">' + banner.innerHTML + '</a> &#8250; <a href="">' + testName + '</a>';
-			}
-		}
-	}
-	
-	var toolbar = id("qunit-testrunner-toolbar");
-	if ( toolbar ) {
-		var filter = document.createElement("input");
-		filter.type = "checkbox";
-		filter.id = "qunit-filter-pass";
-		addEvent( filter, "click", function() {
-			var li = document.getElementsByTagName("li");
-			for ( var i = 0; i < li.length; i++ ) {
-				if ( li[i].className.indexOf("pass") > -1 ) {
-					li[i].style.display = filter.checked ? "none" : "";
-				}
-			}
-			if ( defined.sessionStorage ) {
-				sessionStorage.setItem("qunit-filter-passed-tests", filter.checked ? "true" : "");
-			}
-		});
-		if ( defined.sessionStorage && sessionStorage.getItem("qunit-filter-passed-tests") ) {
-			filter.checked = true;
-		}
-		toolbar.appendChild( filter );
-
-		var label = document.createElement("label");
-		label.setAttribute("for", "qunit-filter-pass");
-		label.innerHTML = "Hide passed tests";
-		toolbar.appendChild( label );
-	}
-
-	var main = id('main') || id('qunit-fixture');
-	if ( main ) {
-		config.fixture = main.innerHTML;
-	}
-
-	if (config.autostart) {
-		QUnit.start();
-	}
-});
-
-function done() {
-	config.autorun = true;
-
-	// Log the last module results
-	if ( config.currentModule ) {
-		QUnit.moduleDone( {
-			name: config.currentModule,
-			failed: config.moduleStats.bad,
-			passed: config.moduleStats.all - config.moduleStats.bad,
-			total: config.moduleStats.all
-		} );
-	}
-
-	var banner = id("qunit-banner"),
-		tests = id("qunit-tests"),
-		runtime = +new Date - config.started,
-		passed = config.stats.all - config.stats.bad,
-		html = [
-			'Tests completed in ',
-			runtime,
-			' milliseconds.<br/>',
-			'<span class="passed">',
-			passed,
-			'</span> tests of <span class="total">',
-			config.stats.all,
-			'</span> passed, <span class="failed">',
-			config.stats.bad,
-			'</span> failed.'
-		].join('');
-
-	if ( banner ) {
-		banner.className = (config.stats.bad ? "qunit-fail" : "qunit-pass");
-	}
-
-	if ( tests ) {	
-		var result = id("qunit-testresult");
-
-		if ( !result ) {
-			result = document.createElement("p");
-			result.id = "qunit-testresult";
-			result.className = "result";
-			tests.parentNode.insertBefore( result, tests.nextSibling );
-		}
-
-		result.innerHTML = html;
-	}
-
-	QUnit.done( {
-		failed: config.stats.bad,
-		passed: passed, 
-		total: config.stats.all,
-		runtime: runtime
-	} );
-}
-
-function validTest( name ) {
-	var i = config.filters.length,
-		run = false;
-
-	if ( !i ) {
-		return true;
-	}
-	
-	while ( i-- ) {
-		var filter = config.filters[i],
-			not = filter.charAt(0) == '!';
-
-		if ( not ) {
-			filter = filter.slice(1);
-		}
-
-		if ( name.indexOf(filter) !== -1 ) {
-			return !not;
-		}
-
-		if ( not ) {
-			run = true;
-		}
-	}
-
-	return run;
-}
-
-// so far supports only Firefox, Chrome and Opera (buggy)
-// could be extended in the future to use something like https://github.com/csnover/TraceKit
-function sourceFromStacktrace() {
-	try {
-		throw new Error();
-	} catch ( e ) {
-		if (e.stacktrace) {
-			// Opera
-			return e.stacktrace.split("\n")[6];
-		} else if (e.stack) {
-			// Firefox, Chrome
-			return e.stack.split("\n")[4];
-		}
-	}
-}
-
-function resultDisplayStyle(passed) {
-	return passed && id("qunit-filter-pass") && id("qunit-filter-pass").checked ? 'none' : '';
-}
-
-function escapeHtml(s) {
-	if (!s) {
-		return "";
-	}
-	s = s + "";
-	return s.replace(/[\&"<>\\]/g, function(s) {
-		switch(s) {
-			case "&": return "&amp;";
-			case "\\": return "\\\\";
-			case '"': return '\"';
-			case "<": return "&lt;";
-			case ">": return "&gt;";
-			default: return s;
-		}
-	});
-}
-
-function synchronize( callback ) {
-	config.queue.push( callback );
-
-	if ( config.autorun && !config.blocking ) {
-		process();
-	}
-}
-
-function process() {
-	var start = (new Date()).getTime();
-
-	while ( config.queue.length && !config.blocking ) {
-		if ( config.updateRate <= 0 || (((new Date()).getTime() - start) < config.updateRate) ) {
-			config.queue.shift()();
-		} else {
-			window.setTimeout( process, 13 );
-			break;
-		}
-	}
-  if (!config.blocking && !config.queue.length) {
-    done();
-  }
-}
-
-function saveGlobal() {
-	config.pollution = [];
-	
-	if ( config.noglobals ) {
-		for ( var key in window ) {
-			config.pollution.push( key );
-		}
-	}
-}
-
-function checkPollution( name ) {
-	var old = config.pollution;
-	saveGlobal();
-	
-	var newGlobals = diff( old, config.pollution );
-	if ( newGlobals.length > 0 ) {
-		ok( false, "Introduced global variable(s): " + newGlobals.join(", ") );
-		config.current.expected++;
-	}
-
-	var deletedGlobals = diff( config.pollution, old );
-	if ( deletedGlobals.length > 0 ) {
-		ok( false, "Deleted global variable(s): " + deletedGlobals.join(", ") );
-		config.current.expected++;
-	}
-}
-
-// returns a new Array with the elements that are in a but not in b
-function diff( a, b ) {
-	var result = a.slice();
-	for ( var i = 0; i < result.length; i++ ) {
-		for ( var j = 0; j < b.length; j++ ) {
-			if ( result[i] === b[j] ) {
-				result.splice(i, 1);
-				i--;
-				break;
-			}
-		}
-	}
-	return result;
-}
-
-function fail(message, exception, callback) {
-	if ( typeof console !== "undefined" && console.error && console.warn ) {
-		console.error(message);
-		console.error(exception);
-		console.warn(callback.toString());
-
-	} else if ( window.opera && opera.postError ) {
-		opera.postError(message, exception, callback.toString);
-	}
-}
-
-function extend(a, b) {
-	for ( var prop in b ) {
-		a[prop] = b[prop];
-	}
-
-	return a;
-}
-
-function addEvent(elem, type, fn) {
-	if ( elem.addEventListener ) {
-		elem.addEventListener( type, fn, false );
-	} else if ( elem.attachEvent ) {
-		elem.attachEvent( "on" + type, fn );
-	} else {
-		fn();
-	}
-}
-
-function id(name) {
-	return !!(typeof document !== "undefined" && document && document.getElementById) &&
-		document.getElementById( name );
-}
-
-// Test for equality any JavaScript type.
-// Discussions and reference: http://philrathe.com/articles/equiv
-// Test suites: http://philrathe.com/tests/equiv
-// Author: Philippe Rathé <prathe@gmail.com>
-QUnit.equiv = function () {
-
-    var innerEquiv; // the real equiv function
-    var callers = []; // stack to decide between skip/abort functions
-    var parents = []; // stack to avoiding loops from circular referencing
-
-    // Call the o related callback with the given arguments.
-    function bindCallbacks(o, callbacks, args) {
-        var prop = QUnit.objectType(o);
-        if (prop) {
-            if (QUnit.objectType(callbacks[prop]) === "function") {
-                return callbacks[prop].apply(callbacks, args);
-            } else {
-                return callbacks[prop]; // or undefined
-            }
-        }
-    }
-    
-    var callbacks = function () {
-
-        // for string, boolean, number and null
-        function useStrictEquality(b, a) {
-            if (b instanceof a.constructor || a instanceof b.constructor) {
-                // to catch short annotaion VS 'new' annotation of a declaration
-                // e.g. var i = 1;
-                //      var j = new Number(1);
-                return a == b;
-            } else {
-                return a === b;
-            }
-        }
-
-        return {
-            "string": useStrictEquality,
-            "boolean": useStrictEquality,
-            "number": useStrictEquality,
-            "null": useStrictEquality,
-            "undefined": useStrictEquality,
-
-            "nan": function (b) {
-                return isNaN(b);
-            },
-
-            "date": function (b, a) {
-                return QUnit.objectType(b) === "date" && a.valueOf() === b.valueOf();
-            },
-
-            "regexp": function (b, a) {
-                return QUnit.objectType(b) === "regexp" &&
-                    a.source === b.source && // the regex itself
-                    a.global === b.global && // and its modifers (gmi) ...
-                    a.ignoreCase === b.ignoreCase &&
-                    a.multiline === b.multiline;
-            },
-
-            // - skip when the property is a method of an instance (OOP)
-            // - abort otherwise,
-            //   initial === would have catch identical references anyway
-            "function": function () {
-                var caller = callers[callers.length - 1];
-                return caller !== Object &&
-                        typeof caller !== "undefined";
-            },
-
-            "array": function (b, a) {
-                var i, j, loop;
-                var len;
-
-                // b could be an object literal here
-                if ( ! (QUnit.objectType(b) === "array")) {
-                    return false;
-                }   
-                
-                len = a.length;
-                if (len !== b.length) { // safe and faster
-                    return false;
-                }
-                
-                //track reference to avoid circular references
-                parents.push(a);
-                for (i = 0; i < len; i++) {
-                    loop = false;
-                    for(j=0;j<parents.length;j++){
-                        if(parents[j] === a[i]){
-                            loop = true;//dont rewalk array
-                        }
-                    }
-                    if (!loop && ! innerEquiv(a[i], b[i])) {
-                        parents.pop();
-                        return false;
-                    }
-                }
-                parents.pop();
-                return true;
-            },
-
-            "object": function (b, a) {
-                var i, j, loop;
-                var eq = true; // unless we can proove it
-                var aProperties = [], bProperties = []; // collection of strings
-
-                // comparing constructors is more strict than using instanceof
-                if ( a.constructor !== b.constructor) {
-                    return false;
-                }
-
-                // stack constructor before traversing properties
-                callers.push(a.constructor);
-                //track reference to avoid circular references
-                parents.push(a);
-                
-                for (i in a) { // be strict: don't ensures hasOwnProperty and go deep
-                    loop = false;
-                    for(j=0;j<parents.length;j++){
-                        if(parents[j] === a[i])
-                            loop = true; //don't go down the same path twice
-                    }
-                    aProperties.push(i); // collect a's properties
-
-                    if (!loop && ! innerEquiv(a[i], b[i])) {
-                        eq = false;
-                        break;
-                    }
-                }
-
-                callers.pop(); // unstack, we are done
-                parents.pop();
-
-                for (i in b) {
-                    bProperties.push(i); // collect b's properties
-                }
-
-                // Ensures identical properties name
-                return eq && innerEquiv(aProperties.sort(), bProperties.sort());
-            }
-        };
-    }();
-
-    innerEquiv = function () { // can take multiple arguments
-        var args = Array.prototype.slice.apply(arguments);
-        if (args.length < 2) {
-            return true; // end transition
-        }
-
-        return (function (a, b) {
-            if (a === b) {
-                return true; // catch the most you can
-            } else if (a === null || b === null || typeof a === "undefined" || typeof b === "undefined" || QUnit.objectType(a) !== QUnit.objectType(b)) {
-                return false; // don't lose time with error prone cases
-            } else {
-                return bindCallbacks(a, callbacks, [b, a]);
-            }
-
-        // apply transition with (1..n) arguments
-        })(args[0], args[1]) && arguments.callee.apply(this, args.splice(1, args.length -1));
-    };
-
-    return innerEquiv;
-
-}();
-
-/**
- * jsDump
- * Copyright (c) 2008 Ariel Flesler - aflesler(at)gmail(dot)com | http://flesler.blogspot.com
- * Licensed under BSD (http://www.opensource.org/licenses/bsd-license.php)
- * Date: 5/15/2008
- * @projectDescription Advanced and extensible data dumping for Javascript.
- * @version 1.0.0
- * @author Ariel Flesler
- * @link {http://flesler.blogspot.com/2008/05/jsdump-pretty-dump-of-any-javascript.html}
- */
-QUnit.jsDump = (function() {
-	function quote( str ) {
-		return '"' + str.toString().replace(/"/g, '\\"') + '"';
-	};
-	function literal( o ) {
-		return o + '';	
-	};
-	function join( pre, arr, post ) {
-		var s = jsDump.separator(),
-			base = jsDump.indent(),
-			inner = jsDump.indent(1);
-		if ( arr.join )
-			arr = arr.join( ',' + s + inner );
-		if ( !arr )
-			return pre + post;
-		return [ pre, inner + arr, base + post ].join(s);
-	};
-	function array( arr ) {
-		var i = arr.length,	ret = Array(i);					
-		this.up();
-		while ( i-- )
-			ret[i] = this.parse( arr[i] );				
-		this.down();
-		return join( '[', ret, ']' );
-	};
-	
-	var reName = /^function (\w+)/;
-	
-	var jsDump = {
-		parse:function( obj, type ) { //type is used mostly internally, you can fix a (custom)type in advance
-			var	parser = this.parsers[ type || this.typeOf(obj) ];
-			type = typeof parser;			
-			
-			return type == 'function' ? parser.call( this, obj ) :
-				   type == 'string' ? parser :
-				   this.parsers.error;
-		},
-		typeOf:function( obj ) {
-			var type;
-			if ( obj === null ) {
-				type = "null";
-			} else if (typeof obj === "undefined") {
-				type = "undefined";
-			} else if (QUnit.is("RegExp", obj)) {
-				type = "regexp";
-			} else if (QUnit.is("Date", obj)) {
-				type = "date";
-			} else if (QUnit.is("Function", obj)) {
-				type = "function";
-			} else if (typeof obj.setInterval !== undefined && typeof obj.document !== "undefined" && typeof obj.nodeType === "undefined") {
-				type = "window";
-			} else if (obj.nodeType === 9) {
-				type = "document";
-			} else if (obj.nodeType) {
-				type = "node";
-			} else if (typeof obj === "object" && typeof obj.length === "number" && obj.length >= 0) {
-				type = "array";
-			} else {
-				type = typeof obj;
-			}
-			return type;
-		},
-		separator:function() {
-			return this.multiline ?	this.HTML ? '<br />' : '\n' : this.HTML ? '&nbsp;' : ' ';
-		},
-		indent:function( extra ) {// extra can be a number, shortcut for increasing-calling-decreasing
-			if ( !this.multiline )
-				return '';
-			var chr = this.indentChar;
-			if ( this.HTML )
-				chr = chr.replace(/\t/g,'   ').replace(/ /g,'&nbsp;');
-			return Array( this._depth_ + (extra||0) ).join(chr);
-		},
-		up:function( a ) {
-			this._depth_ += a || 1;
-		},
-		down:function( a ) {
-			this._depth_ -= a || 1;
-		},
-		setParser:function( name, parser ) {
-			this.parsers[name] = parser;
-		},
-		// The next 3 are exposed so you can use them
-		quote:quote, 
-		literal:literal,
-		join:join,
-		//
-		_depth_: 1,
-		// This is the list of parsers, to modify them, use jsDump.setParser
-		parsers:{
-			window: '[Window]',
-			document: '[Document]',
-			error:'[ERROR]', //when no parser is found, shouldn't happen
-			unknown: '[Unknown]',
-			'null':'null',
-			undefined:'undefined',
-			'function':function( fn ) {
-				var ret = 'function',
-					name = 'name' in fn ? fn.name : (reName.exec(fn)||[])[1];//functions never have name in IE
-				if ( name )
-					ret += ' ' + name;
-				ret += '(';
-				
-				ret = [ ret, QUnit.jsDump.parse( fn, 'functionArgs' ), '){'].join('');
-				return join( ret, QUnit.jsDump.parse(fn,'functionCode'), '}' );
-			},
-			array: array,
-			nodelist: array,
-			arguments: array,
-			object:function( map ) {
-				var ret = [ ];
-				QUnit.jsDump.up();
-				for ( var key in map )
-					ret.push( QUnit.jsDump.parse(key,'key') + ': ' + QUnit.jsDump.parse(map[key]) );
-				QUnit.jsDump.down();
-				return join( '{', ret, '}' );
-			},
-			node:function( node ) {
-				var open = QUnit.jsDump.HTML ? '&lt;' : '<',
-					close = QUnit.jsDump.HTML ? '&gt;' : '>';
-					
-				var tag = node.nodeName.toLowerCase(),
-					ret = open + tag;
-					
-				for ( var a in QUnit.jsDump.DOMAttrs ) {
-					var val = node[QUnit.jsDump.DOMAttrs[a]];
-					if ( val )
-						ret += ' ' + a + '=' + QUnit.jsDump.parse( val, 'attribute' );
-				}
-				return ret + close + open + '/' + tag + close;
-			},
-			functionArgs:function( fn ) {//function calls it internally, it's the arguments part of the function
-				var l = fn.length;
-				if ( !l ) return '';				
-				
-				var args = Array(l);
-				while ( l-- )
-					args[l] = String.fromCharCode(97+l);//97 is 'a'
-				return ' ' + args.join(', ') + ' ';
-			},
-			key:quote, //object calls it internally, the key part of an item in a map
-			functionCode:'[code]', //function calls it internally, it's the content of the function
-			attribute:quote, //node calls it internally, it's an html attribute value
-			string:quote,
-			date:quote,
-			regexp:literal, //regex
-			number:literal,
-			'boolean':literal
-		},
-		DOMAttrs:{//attributes to dump from nodes, name=>realName
-			id:'id',
-			name:'name',
-			'class':'className'
-		},
-		HTML:false,//if true, entities are escaped ( <, >, \t, space and \n )
-		indentChar:'  ',//indentation unit
-		multiline:true //if true, items in a collection, are separated by a \n, else just a space.
-	};
-
-	return jsDump;
-})();
-
-// from Sizzle.js
-function getText( elems ) {
-	var ret = "", elem;
-
-	for ( var i = 0; elems[i]; i++ ) {
-		elem = elems[i];
-
-		// Get the text from text nodes and CDATA nodes
-		if ( elem.nodeType === 3 || elem.nodeType === 4 ) {
-			ret += elem.nodeValue;
-
-		// Traverse everything else, except comment nodes
-		} else if ( elem.nodeType !== 8 ) {
-			ret += getText( elem.childNodes );
-		}
-	}
-
-	return ret;
-};
-
-/*
- * Javascript Diff Algorithm
- *  By John Resig (http://ejohn.org/)
- *  Modified by Chu Alan "sprite"
- *
- * Released under the MIT license.
- *
- * More Info:
- *  http://ejohn.org/projects/javascript-diff-algorithm/
- *  
- * Usage: QUnit.diff(expected, actual)
- * 
- * QUnit.diff("the quick brown fox jumped over", "the quick fox jumps over") == "the  quick <del>brown </del> fox <del>jumped </del><ins>jumps </ins> over"
- */
-QUnit.diff = (function() {
-	function diff(o, n){
-		var ns = new Object();
-		var os = new Object();
-		
-		for (var i = 0; i < n.length; i++) {
-			if (ns[n[i]] == null) 
-				ns[n[i]] = {
-					rows: new Array(),
-					o: null
-				};
-			ns[n[i]].rows.push(i);
-		}
-		
-		for (var i = 0; i < o.length; i++) {
-			if (os[o[i]] == null) 
-				os[o[i]] = {
-					rows: new Array(),
-					n: null
-				};
-			os[o[i]].rows.push(i);
-		}
-		
-		for (var i in ns) {
-			if (ns[i].rows.length == 1 && typeof(os[i]) != "undefined" && os[i].rows.length == 1) {
-				n[ns[i].rows[0]] = {
-					text: n[ns[i].rows[0]],
-					row: os[i].rows[0]
-				};
-				o[os[i].rows[0]] = {
-					text: o[os[i].rows[0]],
-					row: ns[i].rows[0]
-				};
-			}
-		}
-		
-		for (var i = 0; i < n.length - 1; i++) {
-			if (n[i].text != null && n[i + 1].text == null && n[i].row + 1 < o.length && o[n[i].row + 1].text == null &&
-			n[i + 1] == o[n[i].row + 1]) {
-				n[i + 1] = {
-					text: n[i + 1],
-					row: n[i].row + 1
-				};
-				o[n[i].row + 1] = {
-					text: o[n[i].row + 1],
-					row: i + 1
-				};
-			}
-		}
-		
-		for (var i = n.length - 1; i > 0; i--) {
-			if (n[i].text != null && n[i - 1].text == null && n[i].row > 0 && o[n[i].row - 1].text == null &&
-			n[i - 1] == o[n[i].row - 1]) {
-				n[i - 1] = {
-					text: n[i - 1],
-					row: n[i].row - 1
-				};
-				o[n[i].row - 1] = {
-					text: o[n[i].row - 1],
-					row: i - 1
-				};
-			}
-		}
-		
-		return {
-			o: o,
-			n: n
-		};
-	}
-	
-	return function(o, n){
-		o = o.replace(/\s+$/, '');
-		n = n.replace(/\s+$/, '');
-		var out = diff(o == "" ? [] : o.split(/\s+/), n == "" ? [] : n.split(/\s+/));
-
-		var str = "";
-		
-		var oSpace = o.match(/\s+/g);
-		if (oSpace == null) {
-			oSpace = [" "];
-		}
-		else {
-			oSpace.push(" ");
-		}
-		var nSpace = n.match(/\s+/g);
-		if (nSpace == null) {
-			nSpace = [" "];
-		}
-		else {
-			nSpace.push(" ");
-		}
-		
-		if (out.n.length == 0) {
-			for (var i = 0; i < out.o.length; i++) {
-				str += '<del>' + out.o[i] + oSpace[i] + "</del>";
-			}
-		}
-		else {
-			if (out.n[0].text == null) {
-				for (n = 0; n < out.o.length && out.o[n].text == null; n++) {
-					str += '<del>' + out.o[n] + oSpace[n] + "</del>";
-				}
-			}
-			
-			for (var i = 0; i < out.n.length; i++) {
-				if (out.n[i].text == null) {
-					str += '<ins>' + out.n[i] + nSpace[i] + "</ins>";
-				}
-				else {
-					var pre = "";
-					
-					for (n = out.n[i].row + 1; n < out.o.length && out.o[n].text == null; n++) {
-						pre += '<del>' + out.o[n] + oSpace[n] + "</del>";
-					}
-					str += " " + out.n[i].text + nSpace[i] + pre;
-				}
-			}
-		}
-		
-		return str;
-	};
-})();
-
-})(this);
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/qunit.js
-
-
-__jah__.resources["/libs/cocos2d/libs/util.js"] = {data: function (exports, require, module, __filename, __dirname) {
-var path = require('path');
-
-/**
- * @namespace
- * Useful utility functions
- */
-var util = {
-    /**
-     * Merge two or more objects and return the result.
-     *
-     * @param {Object} firstObject First object to merge with
-     * @param {Object} secondObject Second object to merge with
-     * @param {Object} [...] More objects to merge
-     * @returns {Object} A new object containing the properties of all the objects passed in
-     */
-    merge: function(firstObject, secondObject) {
-        var result = {};
-
-        for (var i = 0; i < arguments.length; i++) {
-            var obj = arguments[i];
-
-            for (var x in obj) {
-                if (!obj.hasOwnProperty(x)) {
-                    continue;
-                }
-
-                result[x] = obj[x];
-            }
-        };
-
-        return result;
-    },
-
-    /**
-     * Creates a deep copy of an object
-     *
-     * @param {Object} obj The Object to copy
-     * @returns {Object} A copy of the original Object
-     */
-    copy: function(obj) {
-        if (obj === null) {
-            return null;
-        }
-
-        var copy;
-
-        if (obj instanceof Array) {
-            copy = [];
-            for (var i = 0, len = obj.length; i < len; i++) {
-                copy[i] = util.copy(obj[i]);
-            }
-        } else if (typeof(obj) == 'object') {
-            if (typeof(obj.copy) == 'function') {
-                copy = obj.copy();
-            } else {
-                copy = {};
-
-                var o, x;
-                for (x in obj) {
-                    copy[x] = util.copy(obj[x]);
-                }
-            }
-        } else {
-            // Primative type. Doesn't need copying
-            copy = obj;
-        }
-
-        return copy;
-    },
-
-    /**
-     * Iterates over an array and calls a function for each item.
-     *
-     * @param {Array} arr An Array to iterate over
-     * @param {Function} func A function to call for each item in the array
-     * @returns {Array} The original array
-     */
-    each: function(arr, func) {
-        var i = 0,
-            len = arr.length;
-        for (i = 0; i < len; i++) {
-            func(arr[i], i);
-        }
-
-        return arr;
-    },
-
-    /**
-     * Iterates over an array, calls a function for each item and returns the results.
-     *
-     * @param {Array} arr An Array to iterate over
-     * @param {Function} func A function to call for each item in the array
-     * @returns {Array} The return values from each function call
-     */
-    map: function(arr, func) {
-        var i = 0,
-            len = arr.length,
-            result = [];
-
-        for (i = 0; i < len; i++) {
-            result.push(func(arr[i], i));
-        }
-
-        return result;
-    },
-
-    extend: function(target, ext) {
-        if (arguments.length < 2) {
-            throw "You must provide at least a target and 1 object to extend from"
-        }
-
-        var i, j, obj, key, val;
-
-        for (i = 1; i < arguments.length; i++) {
-            obj = arguments[i];
-            for (key in obj) {
-                // Don't copy built-ins
-                if (!obj.hasOwnProperty(key)) {
-                    continue;
-                }
-
-                val = obj[key];
-                // Don't copy undefineds or references to target (would cause infinite loop)
-                if (val === undefined || val === target) {
-                    continue;
-                }
-
-                // Replace existing function and store reference to it in .base
-                if (val instanceof Function && target[key] && val !== target[key]) {
-                    val.base = target[key];
-                    val._isProperty = val.base._isProperty;
-                }
-                target[key] = val;
-
-                if (val instanceof Function) {
-                    // If this function observes make a reference to it so we can set
-                    // them up when this get instantiated
-                    if (val._observing) {
-                        // Force a COPY of the array or we will probably end up with various
-                        // classes sharing the same one.
-                        if (!target._observingFunctions) {
-                            target._observingFunctions = [];
-                        } else {
-                            target._observingFunctions = target._observingFunctions.slice(0);
-                        }
-
-
-                        for (j = 0; j<val._observing.length; j++) {
-                            target._observingFunctions.push({property:val._observing[j], method: key});
-                        }
-                    } // if (val._observing)
-
-                    // If this is a computer property then add it to the list so get/set know where to look
-                    if (val._isProperty) {
-                        if (!target._computedProperties) {
-                            target._computedProperties = [];
-                        } else {
-                            target._computedProperties = target._computedProperties.slice(0);
-                        }
-
-                        target._computedProperties.push(key)
-                    }
-                }
-        
-            }
-        }
-
-
-        return target;
-    },
-
-    beget: function(o) {
-        var F = function(){};
-        F.prototype = o;
-        var ret  = new F();
-        F.prototype = null;
-        return ret;
-    },
-
-    callback: function(target, method) {
-        if (typeof(method) == 'string') {
-            var methodName = method;
-            method = target[method];
-            if (!method) {
-                throw "Callback to undefined method: " + methodName;
-            }
-        }
-        if (!method) {
-            throw "Callback with no method to call";
-        }
-
-        return function() {
-            method.apply(target, arguments);
-        }
-    },
-
-    domReady: function() {
-        if (this._isReady) {
-            return;
-        }
-
-        if (!document.body) {
-            setTimeout(function() { util.domReady(); }, 13);
-        }
-
-        window.__isReady = true;
-
-        if (window.__readyList) {
-            var fn, i = 0;
-            while ( (fn = window.__readyList[ i++ ]) ) {
-                fn.call(document);
-            }
-
-            window.__readyList = null;
-            delete window.__readyList;
-        }
-    },
-
-
-    /**
-     * Adapted from jQuery
-     * @ignore
-     */
-    bindReady: function() {
-
-        if (window.__readyBound) {
-            return;
-        }
-
-        window.__readyBound = true;
-
-        // Catch cases where $(document).ready() is called after the
-        // browser event has already occurred.
-        if ( document.readyState === "complete" ) {
-            return util.domReady();
-        }
-
-        // Mozilla, Opera and webkit nightlies currently support this event
-        if ( document.addEventListener ) {
-            // Use the handy event callback
-            //document.addEventListener( "DOMContentLoaded", DOMContentLoaded, false );
-            
-            // A fallback to window.onload, that will always work
-            window.addEventListener( "load", util.domReady, false );
-
-        // If IE event model is used
-        } else if ( document.attachEvent ) {
-            // ensure firing before onload,
-            // maybe late but safe also for iframes
-            //document.attachEvent("onreadystatechange", DOMContentLoaded);
-            
-            // A fallback to window.onload, that will always work
-            window.attachEvent( "onload", util.domReady );
-
-            // If IE and not a frame
-            /*
-            // continually check to see if the document is ready
-            var toplevel = false;
-
-            try {
-                toplevel = window.frameElement == null;
-            } catch(e) {}
-
-            if ( document.documentElement.doScroll && toplevel ) {
-                doScrollCheck();
-            }
-            */
-        }
-    },
-
-
-
-    ready: function(func) {
-        if (window.__isReady) {
-            func()
-        } else {
-            if (!window.__readyList) {
-                window.__readyList = [];
-            }
-            window.__readyList.push(func);
-        }
-
-        util.bindReady();
-    },
-
-
-    /**
-     * Tests if a given object is an Array
-     *
-     * @param {Array} ar The object to test
-     *
-     * @returns {Boolean} True if it is an Array, otherwise false
-     */
-    isArray: function(ar) {
-      return ar instanceof Array
-          || (ar && ar !== Object.prototype && util.isArray(ar.__proto__));
-    },
-
-
-    /**
-     * Tests if a given object is a RegExp
-     *
-     * @param {RegExp} ar The object to test
-     *
-     * @returns {Boolean} True if it is an RegExp, otherwise false
-     */
-    isRegExp: function(re) {
-      var s = ""+re;
-      return re instanceof RegExp // easy case
-          || typeof(re) === "function" // duck-type for context-switching evalcx case
-          && re.constructor.name === "RegExp"
-          && re.compile
-          && re.test
-          && re.exec
-          && s.charAt(0) === "/"
-          && s.substr(-1) === "/";
-    },
-
-
-    /**
-     * Tests if a given object is a Date
-     *
-     * @param {Date} ar The object to test
-     *
-     * @returns {Boolean} True if it is an Date, otherwise false
-     */
-    isDate: function(d) {
-        if (d instanceof Date) return true;
-        if (typeof d !== "object") return false;
-        var properties = Date.prototype && Object.getOwnPropertyNames(Date.prototype);
-        var proto = d.__proto__ && Object.getOwnPropertyNames(d.__proto__);
-        return JSON.stringify(proto) === JSON.stringify(properties);
-    },
-
-    /**
-     * Utility to populate a namespace's index with its modules
-     *
-     * @param {Object} parent The module the namespace lives in. parent.exports will be populated automatically
-     * @param {String} modules A space separated string of all the module names
-     *
-     * @returns {Object} The index namespace
-     */
-    populateIndex: function(parent, modules) {
-        var namespace = {};
-        modules = modules.split(' ');
-
-        util.each(modules, function(mod, i) {
-            // Use the global 'require' which allows overriding the parent module
-            util.extend(namespace, window.require('./' + mod, parent));
-        });
-
-        util.extend(parent.exports, namespace);
-
-        return namespace;
-    }
-
-
-}
-
-util.extend(String.prototype, /** @scope String.prototype */ {
-    /**
-     * Create an array of words from a string
-     *
-     * @returns {String[]} Array of the words in the string
-     */
-    w: function() {
-        return this.split(' ');
-    }
-});
-
-
-
-
-module.exports = util;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/util.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/AtlasNode.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var SpriteBatchNode = require('./BatchNode').SpriteBatchNode,
-    TextureAtlas = require('../TextureAtlas').TextureAtlas,
-    geo   = require('geometry');
-
-var AtlasNode = SpriteBatchNode.extend(/** @lends cocos.AtlasNode# */{
-    /**
-     * Characters per row
-     * @type Integer
-     */
-    itemsPerRow: 0,
-
-    /**
-     * Characters per column
-     * @type Integer
-     */
-    itemsPerColumn: 0,
-
-    /**
-     * Width of a character
-     * @type Integer
-     */
-    itemWidth: 0,
-
-    /**
-     * Height of a character
-     * @type Integer
-     */
-    itemHeight: 0,
-
-
-    /**
-     * @type cocos.TextureAtlas
-     */
-     textureAtlas: null,
-
-    /**
-     * @class
-     * It knows how to render a TextureAtlas object. If you are going to
-     * render a TextureAtlas consider subclassing cocos.nodes.AtlasNode (or a
-     * subclass of cocos.nodes.AtlasNode)
-     * @memberOf cocos
-     * @extends cocos.nodes.SpriteBatchNode
-     * @constructs
-     *
-     * @opt {String} file Path to Atals image
-     * @opt {Integer} itemWidth Character width
-     * @opt {Integer} itemHeight Character height
-     * @opt {Integer} itemsToRender Quantity of items to render
-     */
-    init: function (opts) {
-        AtlasNode.superclass.init.call(this, opts);
-
-        this.itemWidth = opts.itemWidth;
-        this.itemHeight = opts.itemHeight;
-        
-        this.textureAtlas = TextureAtlas.create({file: opts.file, capacity: opts.itemsToRender});
-
-
-        this._calculateMaxItems();
-    },
-
-    updateAtlasValues: function () {
-        throw "cocos.nodes.AtlasNode:Abstract - updateAtlasValue not overriden";
-    },
-
-    _calculateMaxItems: function () {
-        var s = this.textureAtlas.get('texture.contentSize');
-        this.itemsPerColumn = s.height / this.itemHeight;
-        this.itemsPerRow = s.width / this.itemWidth;
-    }
-});
-
-exports.AtlasNode = AtlasNode;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/AtlasNode.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/BatchNode.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray SHOW_REDRAW_REGIONS*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    evt = require('events'),
-    geo = require('geometry'),
-    ccp = geo.ccp,
-    TextureAtlas = require('../TextureAtlas').TextureAtlas,
-    RenderTexture = require('./RenderTexture').RenderTexture,
-    Node = require('./Node').Node;
-
-var BatchNode = Node.extend(/** @lends cocos.nodes.BatchNode# */{
-    partialDraw: false,
-    contentRect: null,
-    renderTexture: null,
-    dirty: true,
-
-    /**
-     * Region to redraw
-     * @type geometry.Rect
-     */
-    dirtyRegion: null,
-    dynamicResize: false,
-
-    /** @private
-     * Areas that need redrawing
-     *
-     * Not implemented
-     */
-    _dirtyRects: null,
-
-
-    /**
-     * Draws all children to an in-memory canvas and only redraws when something changes
-     *
-     * @memberOf cocos.nodes
-     * @constructs
-     * @extends cocos.nodes.Node
-     *
-     * @opt {geometry.Size} size The size of the in-memory canvas used for drawing to
-     * @opt {Boolean} [partialDraw=false] Draw only the area visible on screen. Small maps may be slower in some browsers if this is true.
-     */
-    init: function (opts) {
-        BatchNode.superclass.init.call(this, opts);
-
-        var size = opts.size || geo.sizeMake(1, 1);
-        this.set('partialDraw', opts.partialDraw);
-
-        evt.addListener(this, 'contentsize_changed', util.callback(this, this._resizeCanvas));
-        
-        this._dirtyRects = [];
-        this.set('contentRect', geo.rectMake(0, 0, size.width, size.height));
-        this.renderTexture = RenderTexture.create(size);
-        this.renderTexture.sprite.set('isRelativeAnchorPoint', false);
-        this.addChild({child: this.renderTexture});
-    },
-
-    addChild: function (opts) {
-        BatchNode.superclass.addChild.call(this, opts);
-
-        var child = opts.child,
-            z     = opts.z;
-
-        if (child == this.renderTexture) {
-            return;
-        }
-
-        // TODO handle texture resize
-
-        // Watch for changes in child
-        var watchEvents = ['position_before_changed',
-                           'scalex_before_changed',
-                           'scaley_before_changed',
-                           'rotation_before_changed',
-                           'anchorpoint_before_changed',
-                           'opacity_before_changed',
-                           'visible_before_changed'];
-        evt.addListener(child, watchEvents, util.callback(this, function () {
-            this.addDirtyRegion(child.get('boundingBox'));
-        }));
-
-        this.addDirtyRegion(child.get('boundingBox'));
-    },
-
-    removeChild: function (opts) {
-        BatchNode.superclass.removeChild.call(this, opts);
-
-        // TODO remove istransformdirty_changed and visible_changed listeners
-
-        this.set('dirty', true);
-    },
-
-    addDirtyRegion: function (rect) {
-        // Increase rect slightly to compensate for subpixel artifacts
-        rect = util.copy(rect);
-        rect.origin.x -= 2;
-        rect.origin.y -= 2;
-        rect.size.width += 4;
-        rect.size.height += 4;
-
-        var region = this.get('dirtyRegion');
-        if (!region) {
-            region = rect;
-        } else {
-            region = geo.rectUnion(region, rect);
-        }
-
-        this.set('dirtyRegion', region);
-        this.set('dirty', true);
-    },
-
-    _resizeCanvas: function (oldSize) {
-        var size = this.get('contentSize');
-
-        if (geo.sizeEqualToSize(size, oldSize)) {
-            return; // No change
-        }
-
-
-        this.renderTexture.set('contentSize', size);
-        this.set('dirty', true);
-    },
-
-    update: function () {
-
-    },
-
-    visit: function (context) {
-        if (!this.visible) {
-            return;
-        }
-
-        context.save();
-
-        this.transform(context);
-
-        var rect = this.get('dirtyRegion');
-        // Only redraw if something changed
-        if (this.dirty) {
-
-            if (rect) {
-                if (this.get('partialDraw')) {
-                    // Clip region to visible area
-                    var s = require('../Director').Director.get('sharedDirector').get('winSize'),
-                        p = this.get('position');
-                    var r = new geo.Rect(
-                        0, 0,
-                        s.width, s.height
-                    );
-                    r = geo.rectApplyAffineTransform(r, this.worldToNodeTransform());
-                    rect = geo.rectIntersection(r, rect);
-                }
-
-                this.renderTexture.clear(rect);
-
-                this.renderTexture.context.save();
-                this.renderTexture.context.beginPath();
-                this.renderTexture.context.rect(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
-                this.renderTexture.context.clip();
-                this.renderTexture.context.closePath();
-            } else {
-                this.renderTexture.clear();
-            }
-
-            for (var i = 0, childLen = this.children.length; i < childLen; i++) {
-                var c = this.children[i];
-                if (c == this.renderTexture) {
-                    continue;
-                }
-
-                // Draw children inside rect
-                if (!rect || geo.rectOverlapsRect(c.get('boundingBox'), rect)) {
-                    c.visit(this.renderTexture.context, rect);
-                }
-            }
-
-            if (SHOW_REDRAW_REGIONS) {
-                if (rect) {
-                    this.renderTexture.context.beginPath();
-                    this.renderTexture.context.rect(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
-                    this.renderTexture.context.fillStyle = "rgba(0, 0, 255, 0.5)";
-                    this.renderTexture.context.fill();
-                    this.renderTexture.context.closePath();
-                }
-            }
-
-            if (rect) {
-                this.renderTexture.context.restore();
-            }
-
-            this.set('dirty', false);
-            this.set('dirtyRegion', null);
-        }
-
-        this.renderTexture.visit(context);
-
-        context.restore();
-    },
-
-    draw: function (ctx) {
-    },
-
-    onEnter: function () {
-        if (this.get('partialDraw')) {
-            evt.addListener(this.get('parent'), 'istransformdirty_changed', util.callback(this, function () {
-                var box = this.get('visibleRect');
-                this.addDirtyRegion(box);
-            }));
-        }
-    }
-});
-
-var SpriteBatchNode = BatchNode.extend(/** @lends cocos.nodes.SpriteBatchNode# */{
-    textureAtlas: null,
-
-    /**
-     * @memberOf cocos.nodes
-     * @class A BatchNode that accepts only Sprite using the same texture
-     * @extends cocos.nodes.BatchNode
-     * @constructs
-     *
-     * @opt {String} file (Optional) Path to image to use as sprite atlas
-     * @opt {Texture2D} texture (Optional) Texture to use as sprite atlas
-     * @opt {cocos.TextureAtlas} textureAtlas (Optional) TextureAtlas to use as sprite atlas
-     */
-    init: function (opts) {
-        SpriteBatchNode.superclass.init.call(this, opts);
-
-        var file         = opts.file,
-            textureAtlas = opts.textureAtlas,
-            texture      = opts.texture;
-
-        if (file || texture) {
-            textureAtlas = TextureAtlas.create({file: file, texture: texture});
-        }
-
-        this.set('textureAtlas', textureAtlas);
-    },
-
-    /**
-     * @getter texture
-     * @type cocos.Texture2D
-     */
-    get_texture: function () {
-        return this.textureAtlas ? this.textureAtlas.texture : null;
-    },
-
-    set_opacity: function (newOpacity) {
-        this.opacity = newOpacity;
-        for (var i = 0, len = this.children.length; i < len; i++) {
-            var child = this.children[i];
-            child.set('opacity', newOpacity);
-        }
-    }
-
-});
-
-exports.BatchNode = BatchNode;
-exports.SpriteBatchNode = SpriteBatchNode;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/BatchNode.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/index.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    path = require('path');
-
-var modules = 'AtlasNode LabelAtlas ProgressBar PreloadScene Node Layer Scene Label Sprite TMXTiledMap BatchNode RenderTexture Menu MenuItem Transition'.split(' ');
-
-/** 
- * @memberOf cocos
- * @namespace All cocos2d nodes. i.e. anything that can be added to a Scene
- */
-var nodes = {};
-
-util.each(modules, function (mod, i) {
-    util.extend(nodes, require('./' + mod));
-});
-
-module.exports = nodes;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/index.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/Label.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray FLIP_Y_AXIS*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    console = require('system').console,
-    Director = require('../Director').Director,
-    Node = require('./Node').Node,
-    ccp = require('geometry').ccp;
-
-var Label = Node.extend(/** @lends cocos.nodes.Label# */{
-    string:   '',
-    fontName: 'Helvetica',
-    fontSize: 16,
-    fontColor: 'white',
-
-    /**
-     * Renders a simple text label
-     *
-     * @constructs
-     * @extends cocos.nodes.Node
-     *
-     * @opt {String} [string=""] The text string to draw
-     * @opt {Float} [fontSize=16] The size of the font
-     * @opt {String} [fontName="Helvetica"] The name of the font to use
-     * @opt {String} [fontColor="white"] The color of the text
-     */
-    init: function (opts) {
-        Label.superclass.init.call(this, opts);
-
-        util.each('fontSize fontName fontColor string'.split(' '), util.callback(this, function (name) {
-            // Set property on init
-            if (opts[name]) {
-                this.set(name, opts[name]);
-            }
-
-            // Update content size
-            this._updateLabelContentSize();
-        }));
-    },
-
-    /** 
-     * String of the font name and size to use in a format &lt;canvas&gt; understands
-     *
-     * @getter font
-     * @type String
-     */
-    get_font: function (key) {
-        return this.get('fontSize') + 'px ' + this.get('fontName');
-    },
-
-    draw: function (context) {
-        if (FLIP_Y_AXIS) {
-            context.save();
-
-            // Flip Y axis
-            context.scale(1, -1);
-            context.translate(0, -this.get('fontSize'));
-        }
-
-
-        context.fillStyle = this.get('fontColor');
-        context.font = this.get('font');
-        context.textBaseline = 'top';
-        if (context.fillText) {
-            context.fillText(this.get('string'), 0, 0);
-        } else if (context.mozDrawText) {
-            context.mozDrawText(this.get('string'));
-        }
-
-        if (FLIP_Y_AXIS) {
-            context.restore();
-        }
-    },
-
-    /**
-     * @private
-     */
-    _updateLabelContentSize: function () {
-        var ctx = Director.get('sharedDirector').get('context');
-        var size = {width: 0, height: this.get('fontSize')};
-
-        var prevFont = ctx.font;
-        ctx.font = this.get('font');
-
-        if (ctx.measureText) {
-            var txtSize = ctx.measureText(this.get('string'));
-            size.width = txtSize.width;
-        } else if (ctx.mozMeasureText) {
-            size.width = ctx.mozMeasureText(this.get('string'));
-        }
-
-        ctx.font = prevFont;
-
-        this.set('contentSize', size);
-    }
-});
-
-module.exports.Label = Label;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/Label.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/LabelAtlas.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var AtlasNode = require('./AtlasNode').AtlasNode,
-    Sprite = require('./Sprite').Sprite,
-    geo   = require('geometry');
-
-var LabelAtlas = AtlasNode.extend(/** @lends cocos.nodes.LabelAtlas# */{
-    string: '',
-
-    mapStartChar: '',
-
-    /**
-     * @memberOf cocos.nodes
-     * @extends cocos.nodes.BatchNode
-     * @constructs
-     *
-     * @opt {String} [string=] Initial text to draw
-     * @opt {String} charMapFile
-     * @opt {Integer} itemWidth
-     * @opt {Integer} itemHeight
-     * @opt {String} startCharMap Single character
-     */
-    init: function (opts) {
-        LabelAtlas.superclass.init.call(this, {
-            file: opts.charMapFile,
-            itemWidth: opts.itemWidth,
-            itemHeight: opts.itemHeight,
-            itemsToRender: opts.string.length,
-            size: new geo.Size(opts.itemWidth * opts.string.length, opts.itemHeight)
-        });
-
-
-        this.mapStartChar = opts.startCharMap.charCodeAt(0);
-        this.set('string', opts.string);
-    },
-
-    updateAtlasValue: function () {
-        var n = this.string.length,
-            s = this.get('string');
-    
-        // FIXME this should reuse children to improve performance
-        while (this.children.length > 0) {
-            this.removeChild(this.children[0]);
-        }
-        for (var i = 0; i < n; i++) {
-            var a = s.charCodeAt(i) - this.mapStartChar,
-                row = (a % this.itemsPerRow),
-                col = Math.floor(a / this.itemsPerRow);
-    
-            var left = row * this.itemWidth,
-                top  = col * this.itemHeight;
-
-            var tile = Sprite.create({rect: new geo.Rect(left, top, this.itemWidth, this.itemHeight),
-                              textureAtlas: this.textureAtlas});
-
-            tile.set('position', new geo.Point(i * this.itemWidth, 0));
-            tile.set('anchorPoint', new geo.Point(0, 0));
-            tile.set('opacity', this.get('opacity'));
-            
-            this.addChild({child: tile});
-        }
-    },
-
-    set_string: function (newString) {
-        this.string = newString;
-
-        this.updateAtlasValue();
-    }
-});
-
-
-exports.LabelAtlas = LabelAtlas;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/LabelAtlas.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/Layer.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var Node = require('./Node').Node,
-    util = require('util'),
-    evt = require('events'),
-    Director = require('../Director').Director,
-    ccp    = require('geometry').ccp,
-    EventDispatcher = require('../EventDispatcher').EventDispatcher;
-
-var Layer = Node.extend(/** @lends cocos.nodes.Layer# */{
-    isMouseEnabled: false,
-    isKeyboardEnabled: false,
-    mouseDelegatePriority: 0,
-    keyboardDelegatePriority: 0,
-
-    /** 
-     * A fullscreen Node. You need at least 1 layer in your app to add other nodes to.
-     *
-     * @memberOf cocos.nodes
-     * @constructs
-     * @extends cocos.nodes.Node
-     */
-    init: function () {
-        Layer.superclass.init.call(this);
-
-        var s = Director.get('sharedDirector').get('winSize');
-
-        this.set('isRelativeAnchorPoint', false);
-        this.anchorPoint = ccp(0.5, 0.5);
-        this.set('contentSize', s);
-
-        evt.addListener(this, 'ismouseenabled_changed', util.callback(this, function () {
-            if (this.isRunning) {
-                if (this.isMouseEnabled) {
-                    EventDispatcher.get('sharedDispatcher').addMouseDelegate({delegate: this, priority: this.get('mouseDelegatePriority')});
-                } else {
-                    EventDispatcher.get('sharedDispatcher').removeMouseDelegate({delegate: this});
-                }
-            }
-        }));
-
-
-        evt.addListener(this, 'iskeyboardenabled_changed', util.callback(this, function () {
-            if (this.isRunning) {
-                if (this.isKeyboardEnabled) {
-                    EventDispatcher.get('sharedDispatcher').addKeyboardDelegate({delegate: this, priority: this.get('keyboardDelegatePriority')});
-                } else {
-                    EventDispatcher.get('sharedDispatcher').removeKeyboardDelegate({delegate: this});
-                }
-            }
-        }));
-    },
-
-    onEnter: function () {
-        if (this.isMouseEnabled) {
-            EventDispatcher.get('sharedDispatcher').addMouseDelegate({delegate: this, priority: this.get('mouseDelegatePriority')});
-        }
-        if (this.isKeyboardEnabled) {
-            EventDispatcher.get('sharedDispatcher').addKeyboardDelegate({delegate: this, priority: this.get('keyboardDelegatePriority')});
-        }
-				
-        Layer.superclass.onEnter.call(this);
-    },
-
-    onExit: function () {
-        if (this.isMouseEnabled) {
-            EventDispatcher.get('sharedDispatcher').removeMouseDelegate({delegate: this});
-        }
-        if (this.isKeyboardEnabled) {
-            EventDispatcher.get('sharedDispatcher').removeKeyboardDelegate({delegate: this});
-        }
-
-        Layer.superclass.onExit.call(this);
-    }
-});
-
-module.exports.Layer = Layer;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/Layer.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/Menu.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    Layer = require('./Layer').Layer,
-    Director = require('../Director').Director,
-    MenuItem = require('./MenuItem').MenuItem,
-    geom = require('geometry'), ccp = geom.ccp;
-
-/**
- * @private
- * @constant
- */
-var kMenuStateWaiting = 0;
-
-/**
- * @private
- * @constant
- */
-var kMenuStateTrackingTouch = 1;
-    
-
-var Menu = Layer.extend(/** @lends cocos.nodes.Menu# */{
-    mouseDelegatePriority: (-Number.MAX_VALUE + 1),
-    state: kMenuStateWaiting,
-    selectedItem: null,
-    color: null,
-
-    /**
-     * A fullscreen node used to render a selection of menu options
-     *
-     * @memberOf cocos.nodes
-     * @constructs
-     * @extends cocos.nodes.Layer
-     *
-     * @opt {cocos.nodes.MenuItem[]} items An array of MenuItems to draw on the menu
-     */
-    init: function (opts) {
-        Menu.superclass.init.call(this, opts);
-
-        var items = opts.items;
-
-        this.set('isMouseEnabled', true);
-        
-        var s = Director.get('sharedDirector').get('winSize');
-
-        this.set('isRelativeAnchorPoint', false);
-        this.anchorPoint = ccp(0.5, 0.5);
-        this.set('contentSize', s);
-
-        this.set('position', ccp(s.width / 2, s.height / 2));
-
-
-        if (items) {
-            var z = 0;
-            util.each(items, util.callback(this, function (item) {
-                this.addChild({child: item, z: z++});
-            }));
-        }
-
-        
-    },
-
-    addChild: function (opts) {
-        if (!opts.child instanceof MenuItem) {
-            throw "Menu only supports MenuItem objects as children";
-        }
-
-        Menu.superclass.addChild.call(this, opts);
-    },
-
-    itemForMouseEvent: function (event) {
-        var location = event.locationInCanvas;
-
-        var children = this.get('children');
-        for (var i = 0, len = children.length; i < len; i++) {
-            var item = children[i];
-
-            if (item.get('visible') && item.get('isEnabled')) {
-                var local = item.convertToNodeSpace(location);
-                
-                var r = item.get('rect');
-                r.origin = ccp(0, 0);
-
-                if (geom.rectContainsPoint(r, local)) {
-                    return item;
-                }
-
-            }
-        }
-
-        return null;
-    },
-
-    mouseUp: function (event) {
-        var selItem = this.get('selectedItem');
-
-        if (selItem) {
-            selItem.unselected();
-            selItem.activate();
-        }
-
-        if (this.state != kMenuStateWaiting) {
-            this.set('state', kMenuStateWaiting);
-        }
-        if (selItem) {
-            return true;
-        }
-        return false;
-
-    },
-    mouseDown: function (event) {
-        if (this.state != kMenuStateWaiting || !this.visible) {
-            return false;
-        }
-
-        var selectedItem = this.itemForMouseEvent(event);
-        this.set('selectedItem', selectedItem);
-        if (selectedItem) {
-            selectedItem.selected()
-            this.set('state', kMenuStateTrackingTouch);
-
-            return true;
-        }
-
-        return false;
-    },
-
-    mouseDragged: function (event) {
-        var currentItem = this.itemForMouseEvent(event);
-
-        if (currentItem != this.selectedItem) {
-            if (this.selectedItem) {
-                this.selectedItem.unselected();
-            }
-            this.set('selectedItem', currentItem);
-            if (this.selectedItem) {
-                this.selectedItem.selected();
-            }
-        }
-
-        if (currentItem && this.state == kMenuStateTrackingTouch) {
-            return true;
-        }
-
-        return false;
-        
-    }
-
-});
-
-exports.Menu = Menu;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/Menu.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/MenuItem.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    Node = require('./Node').Node,
-    Sprite = require('./Sprite').Sprite,
-    rectMake = require('geometry').rectMake,
-    ccp = require('geometry').ccp;
-
-var MenuItem = Node.extend(/** @lends cocos.nodes.MenuItem# */{
-    isEnabled: true,
-    isSelected: false,
-    callback: null,
-
-    /**
-     * Base class for any buttons or options in a menu
-     *
-     * @memberOf cocos.nodes
-     * @constructs
-     * @extends cocos.nodes.Node
-     *
-     * @opt {Function} callback Function to call when menu item is activated
-     */
-    init: function (opts) {
-        MenuItem.superclass.init.call(this, opts);
-
-        var callback = opts.callback;
-
-        this.set('anchorPoint', ccp(0.5, 0.5));
-        this.set('callback', callback);
-    },
-
-    activate: function () {
-        if (this.isEnabled && this.callback) {
-            this.callback(this);
-        }
-    },
-
-    /**
-     * @getter rect
-     * @type geometry.Rect
-     */
-    get_rect: function () {
-        return rectMake(
-            this.position.x - this.contentSize.width  * this.anchorPoint.x,
-            this.position.y - this.contentSize.height * this.anchorPoint.y,
-            this.contentSize.width,
-            this.contentSize.height
-        );
-    },
-
-    selected: function () {
-        this.isSelected = true;
-    },
-
-    unselected: function () {
-        this.isSelected = false;
-    }
-});
-
-var MenuItemSprite = MenuItem.extend(/** @lends cocos.nodes.MenuItemSprite# */{
-    normalImage: null,
-    selectedImage: null,
-    disabledImage: null,
-
-    /**
-     * A menu item that accepts any cocos.nodes.Node
-     *
-     * @memberOf cocos.nodes
-     * @constructs
-     * @extends cocos.nodes.MenuItem
-     *
-     * @opt {cocos.nodes.Node} normalImage Main Node to draw
-     * @opt {cocos.nodes.Node} selectedImage Node to draw when menu item is selected
-     * @opt {cocos.nodes.Node} disabledImage Node to draw when menu item is disabled
-     */
-    init: function (opts) {
-        MenuItemSprite.superclass.init.call(this, opts);
-
-        var normalImage   = opts.normalImage,
-            selectedImage = opts.selectedImage,
-            disabledImage = opts.disabledImage;
-
-        this.set('normalImage', normalImage);
-        this.set('selectedImage', selectedImage);
-        this.set('disabledImage', disabledImage);
-
-        this.set('contentSize', normalImage.get('contentSize'));
-    },
-
-    set_normalImage: function (image) {
-        if (image != this.normalImage) {
-            image.set('anchorPoint', ccp(0, 0));
-            image.set('visible', true);
-            this.removeChild({child: this.normalImage, cleanup: true});
-            this.addChild(image);
-
-            this.normalImage = image;
-        }
-    },
-
-    set_selectedImage: function (image) {
-        if (image != this.selectedImage) {
-            image.set('anchorPoint', ccp(0, 0));
-            image.set('visible', false);
-            this.removeChild({child: this.selectedImage, cleanup: true});
-            this.addChild(image);
-
-            this.selectedImage = image;
-        }
-    },
-
-    set_disabledImage: function (image) {
-        if (image != this.disabledImage) {
-            image.set('anchorPoint', ccp(0, 0));
-            image.set('visible', false);
-            this.removeChild({child: this.disabledImage, cleanup: true});
-            this.addChild(image);
-
-            this.disabledImage = image;
-        }
-    },
-
-    selected: function () {
-        MenuItemSprite.superclass.selected.call(this);
-
-        if (this.selectedImage) {
-            this.normalImage.set('visible',   false);
-            this.selectedImage.set('visible', true);
-            if (this.disabledImage) this.disabledImage.set('visible', false);
-        } else {
-            this.normalImage.set('visible',   true);
-            if (this.disabledImage) this.disabledImage.set('visible', false);
-        }
-    },
-
-    unselected: function () {
-        MenuItemSprite.superclass.unselected.call(this);
-
-        this.normalImage.set('visible',   true);
-        if (this.selectedImage) this.selectedImage.set('visible', false);
-        if (this.disabledImage) this.disabledImage.set('visible', false);
-    },
-
-    set_isEnabled: function (enabled) {
-        this.isEnabled = enabled;
-
-        if (enabled) {
-            this.normalImage.set('visible',   true);
-            if (this.selectedImage) this.selectedImage.set('visible', false);
-            if (this.disabledImage) this.disabledImage.set('visible', false);
-        } else {
-            if (this.disabledImage) {
-                this.normalImage.set('visible',   false);
-                if (this.selectedImage) this.selectedImage.set('visible', false);
-                this.disabledImage.set('visible', true);
-            } else {
-                this.normalImage.set('visible',   true);
-                if (this.selectedImage) this.selectedImage.set('visible', false);
-            }
-        }
-    }
-
-});
-
-var MenuItemImage = MenuItemSprite.extend(/** @lends cocos.nodes.MenuItemImage# */{
-
-    /**
-     * MenuItem that accepts image files
-     *
-     * @memberOf cocos.nodes
-     * @constructs
-     * @extends cocos.nodes.MenuItemSprite
-     *
-     * @opt {String} normalImage Main image file to draw
-     * @opt {String} selectedImage Image file to draw when menu item is selected
-     * @opt {String} disabledImage Image file to draw when menu item is disabled
-     */
-    init: function (opts) {
-        var normalI   = opts.normalImage,
-            selectedI = opts.selectedImage,
-            disabledI = opts.disabledImage,
-            callback  = opts.callback;
-
-        var normalImage = Sprite.create({file: normalI}),
-            selectedImage = Sprite.create({file: selectedI}),
-            disabledImage = null;
-
-        if (disabledI) {
-            disabledImage = Sprite.create({file: disabledI});
-        }
-
-        return MenuItemImage.superclass.init.call(this, {normalImage: normalImage, selectedImage: selectedImage, disabledImage: disabledImage, callback: callback});
-    }
-});
-
-exports.MenuItem = MenuItem;
-exports.MenuItemImage = MenuItemImage;
-exports.MenuItemSprite = MenuItemSprite;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/MenuItem.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/Node.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    evt = require('events'),
-    Scheduler = require('../Scheduler').Scheduler,
-    ActionManager = require('../ActionManager').ActionManager,
-    geo = require('geometry'), ccp = geo.ccp;
-
-var Node = BObject.extend(/** @lends cocos.nodes.Node# */{
-    isCocosNode: true,
-
-    /**
-     * Is the node visible
-     * @type boolean
-     */
-    visible: true,
-
-    /**
-     * Position relative to parent node
-     * @type geometry.Point
-     */
-    position: null,
-
-    /**
-     * Parent node
-     * @type cocos.nodes.Node
-     */
-    parent: null,
-
-    /**
-     * Unique tag to identify the node
-     * @type *
-     */
-    tag: null,
-
-    /**
-     * Size of the node
-     * @type geometry.Size
-     */
-    contentSize: null,
-
-    /**
-     * Nodes Z index. i.e. draw order
-     * @type Integer
-     */
-    zOrder: 0,
-
-    /**
-     * Anchor point for scaling and rotation. 0x0 is top left and 1x1 is bottom right
-     * @type geometry.Point
-     */
-    anchorPoint: null,
-
-    /**
-     * Anchor point for scaling and rotation in pixels from top left
-     * @type geometry.Point
-     */
-    anchorPointInPixels: null,
-
-    /**
-     * Rotation angle in degrees
-     * @type Float
-     */
-    rotation: 0,
-
-    /**
-     * X scale factor
-     * @type Float
-     */
-    scaleX: 1,
-
-    /**
-     * Y scale factor
-     * @type Float
-     */
-    scaleY: 1,
-
-    /**
-     * Opacity of the Node. 0 is totally transparent, 255 is totally opaque
-     * @type Float
-     */
-    opacity: 255,
-
-    isRunning: false,
-    isRelativeAnchorPoint: true,
-
-    isTransformDirty: true,
-    isInverseDirty: true,
-    inverse: null,
-    transformMatrix: null,
-
-    /**
-     * The child Nodes
-     * @type cocos.nodes.Node[]
-     */
-    children: null,
-
-    /**
-     * @memberOf cocos.nodes
-     * @class The base class all visual elements extend from
-     * @extends BObject
-     * @constructs
-     */
-    init: function () {
-        Node.superclass.init.call(this);
-        this.set('contentSize', {width: 0, height: 0});
-        this.anchorPoint = ccp(0.5, 0.5);
-        this.anchorPointInPixels = ccp(0, 0);
-        this.position = ccp(0, 0);
-        this.children = [];
-
-        util.each(['scaleX', 'scaleY', 'rotation', 'position', 'anchorPoint', 'contentSize', 'isRelativeAnchorPoint'], util.callback(this, function (key) {
-            evt.addListener(this, key.toLowerCase() + '_changed', util.callback(this, this._dirtyTransform));
-        }));
-        evt.addListener(this, 'anchorpoint_changed', util.callback(this, this._updateAnchorPointInPixels));
-        evt.addListener(this, 'contentsize_changed', util.callback(this, this._updateAnchorPointInPixels));
-    },
-
-    /**
-     * Calculates the anchor point in pixels and updates the
-     * anchorPointInPixels property
-     * @private
-     */
-    _updateAnchorPointInPixels: function () {
-        var ap = this.get('anchorPoint'),
-            cs = this.get('contentSize');
-        this.set('anchorPointInPixels', ccp(cs.width * ap.x, cs.height * ap.y));
-    },
-
-    /**
-     * Add a child Node
-     *
-     * @opt {cocos.nodes.Node} child The child node to add
-     * @opt {Integer} [z] Z Index for the child
-     * @opt {Integer|String} [tag] A tag to reference the child with
-     * @returns {cocos.nodes.Node} The node the child was added to. i.e. 'this'
-     */
-    addChild: function (opts) {
-        if (opts.isCocosNode) {
-            return this.addChild({child: opts});
-        }
-
-        var child = opts.child,
-            z = opts.z,
-            tag = opts.tag;
-
-        if (z === undefined || z === null) {
-            z = child.get('zOrder');
-        }
-
-        //this.insertChild({child: child, z:z});
-        var added = false;
-
-
-        for (var i = 0, childLen = this.children.length; i < childLen; i++) {
-            var c = this.children[i];
-            if (c.zOrder > z) {
-                added = true;
-                this.children.splice(i, 0, child);
-                break;
-            }
-        }
-
-        if (!added) {
-            this.children.push(child);
-        }
-
-        child.set('tag', tag);
-        child.set('zOrder', z);
-        child.set('parent', this);
-
-        if (this.isRunning) {
-            child.onEnter();
-        }
-
-        return this;
-    },
-    getChild: function (opts) {
-        var tag = opts.tag;
-
-        for (var i = 0; i < this.children.length; i++) {
-            if (this.children[i].tag == tag) {
-                return this.children[i];
-            }
-        }
-
-        return null;
-    },
-
-    removeChild: function (opts) {
-        if (opts.isCocosNode) {
-            return this.removeChild({child: opts});
-        }
-
-        var child = opts.child,
-            cleanup = opts.cleanup;
-
-        if (!child) {
-            return;
-        }
-
-        var children = this.get('children'),
-            idx = children.indexOf(child);
-
-        if (idx > -1) {
-            this.detatchChild({child: child, cleanup: cleanup});
-        }
-    },
-
-    removeChildren: function(opts) {
-        var children = this.get('children'),
-            isRunning = this.get('isRunning');
-        
-        // Perform cleanup on each child but can't call removeChild() 
-        // due to Array.splice's destructive nature during iteration.
-        for (var i = 0; i < children.length; i++) {
-            if (opts.cleanup) {
-                children[i].cleanup();
-            }
-            if (isRunning) {
-                children[i].onExit();
-            }
-            children[i].set('parent', null);
-        }
-        // Now safe to empty children list
-        this.children = [];
-    },
-    
-    detatchChild: function (opts) {
-        var child = opts.child,
-            cleanup = opts.cleanup;
-
-        var children = this.get('children'),
-            isRunning = this.get('isRunning'),
-            idx = children.indexOf(child);
-
-        if (isRunning) {
-            child.onExit();
-        }
-
-        if (cleanup) {
-            child.cleanup();
-        }
-
-        child.set('parent', null);
-        children.splice(idx, 1);
-    },
-
-    reorderChild: function (opts) {
-        var child = opts.child,
-            z     = opts.z;
-
-        var pos = this.children.indexOf(child);
-        if (pos == -1) {
-            throw "Node isn't a child of this node";
-        }
-
-        child.set('zOrder', z);
-
-        // Remove child
-        this.children.splice(pos, 1);
-
-        // Add child back at correct location
-        var added = false;
-        for (var i = 0, childLen = this.children.length; i < childLen; i++) {
-            var c = this.children[i];
-            if (c.zOrder > z) {
-                added = true;
-                this.children.splice(i, 0, child);
-                break;
-            }
-        }
-
-        if (!added) {
-            this.children.push(child);
-        }
-    },
-
-    /**
-     * Draws the node. Override to do custom drawing. If it's less efficient to
-     * draw only the area inside the rect then don't bother. The result will be
-     * clipped to that area anyway.
-     *
-     * @param {CanvasRenderingContext2D|WebGLRenderingContext} context Canvas rendering context
-     * @param {geometry.Rect} rect Rectangular region that needs redrawing. Limit drawing to this area only if it's more efficient to do so.
-     */
-    draw: function (context, rect) {
-        // All draw code goes here
-    },
-
-    /**
-     * @getter scale
-     * @type Float
-     */
-    get_scale: function () {
-        if (this.scaleX != this.scaleY) {
-            throw "scaleX and scaleY aren't identical";
-        }
-
-        return this.scaleX;
-    },
-
-    /**
-     * @setter scale
-     * @type Float
-     */
-    set_scale: function (val) {
-        this.set('scaleX', val);
-        this.set('scaleY', val);
-    },
-		
-    scheduleUpdate: function (opts) {
-        opts = opts || {};
-        var priority = opts.priority || 0;
-
-        Scheduler.get('sharedScheduler').scheduleUpdate({target: this, priority: priority, paused: !this.get('isRunning')});
-    },
-
-    /**
-     * Triggered when the node is added to a scene
-     *
-     * @event
-     */
-    onEnter: function () {
-        util.each(this.children, function (child) {
-            child.onEnter();
-        });
-
-        this.resumeSchedulerAndActions();
-        this.set('isRunning', true);
-    },
-
-    /**
-     * Triggered when the node is removed from a scene
-     *
-     * @event
-     */
-    onExit: function () {
-        this.pauseSchedulerAndActions();
-        this.set('isRunning', false);
-
-        util.each(this.children, function (child) {
-            child.onExit();
-        });
-    },
-
-    cleanup: function () {
-        this.stopAllActions();
-        this.unscheduleAllSelectors();
-        util.each(this.children, function (child) {
-            child.cleanup();
-        });
-    },
-
-    resumeSchedulerAndActions: function () {
-        Scheduler.get('sharedScheduler').resumeTarget(this);
-        ActionManager.get('sharedManager').resumeTarget(this);
-    },
-    pauseSchedulerAndActions: function () {
-        Scheduler.get('sharedScheduler').pauseTarget(this);
-        ActionManager.get('sharedManager').pauseTarget(this);
-    },
-    unscheduleSelector: function (selector) {
-        Scheduler.get('sharedScheduler').unschedule({target: this, method: selector});
-    },
-    unscheduleAllSelectors: function () {
-        Scheduler.get('sharedScheduler').unscheduleAllSelectorsForTarget(this);
-    },
-    stopAllActions: function () {
-        ActionManager.get('sharedManager').removeAllActionsFromTarget(this);
-    },
-
-    visit: function (context, rect) {
-        if (!this.visible) {
-            return;
-        }
-
-        context.save();
-
-        this.transform(context);
-
-        // Set alpha value (global only for now)
-        context.globalAlpha = this.get('opacity') / 255.0;
-        
-        // Adjust redraw region by nodes position
-        if (rect) {
-            var pos = this.get('position');
-            rect = new geo.Rect(rect.origin.x - pos.x, rect.origin.y - pos.y, rect.size.width, rect.size.height);
-        }
-
-        // Draw background nodes
-        util.each(this.children, function (child, i) {
-            if (child.zOrder < 0) {
-                child.visit(context, rect);
-            }
-        });
-        
-        this.draw(context, rect);
-
-        // Draw foreground nodes
-        util.each(this.children, function (child, i) {
-            if (child.zOrder >= 0) {
-                child.visit(context, rect);
-            }
-        });
-
-        context.restore();
-    },
-    transform: function (context) {
-        // Translate
-        if (this.isRelativeAnchorPoint && (this.anchorPointInPixels.x !== 0 || this.anchorPointInPixels.y !== 0)) {
-            context.translate(Math.round(-this.anchorPointInPixels.x), Math.round(-this.anchorPointInPixels.y));
-        }
-
-        if (this.anchorPointInPixels.x !== 0 || this.anchorPointInPixels.y !== 0) {
-            context.translate(Math.round(this.position.x + this.anchorPointInPixels.x), Math.round(this.position.y + this.anchorPointInPixels.y));
-        } else {
-            context.translate(Math.round(this.position.x), Math.round(this.position.y));
-        }
-
-        // Rotate
-        context.rotate(geo.degreesToRadians(this.get('rotation')));
-
-        // Scale
-        context.scale(this.scaleX, this.scaleY);
-
-        if (this.anchorPointInPixels.x !== 0 || this.anchorPointInPixels.y !== 0) {
-            context.translate(Math.round(-this.anchorPointInPixels.x), Math.round(-this.anchorPointInPixels.y));
-        }
-    },
-
-    runAction: function (action) {
-        ActionManager.get('sharedManager').addAction({action: action, target: this, paused: this.get('isRunning')});
-    },
-    
-    /**
-     * @opts {String} tag Tag of the action to return
-     */
-    getAction: function(opts) {
-        return ActionManager.get('sharedManager').getActionFromTarget({target: this, tag: opts.tag});
-    },
-    
-    nodeToParentTransform: function () {
-        if (this.isTransformDirty) {
-            this.transformMatrix = geo.affineTransformIdentity();
-
-            if (!this.isRelativeAnchorPoint && !geo.pointEqualToPoint(this.anchorPointInPixels, ccp(0, 0))) {
-                this.transformMatrix = geo.affineTransformTranslate(this.transformMatrix, this.anchorPointInPixels.x, this.anchorPointInPixels.y);
-            }
-
-            if (!geo.pointEqualToPoint(this.position, ccp(0, 0))) {
-                this.transformMatrix = geo.affineTransformTranslate(this.transformMatrix, this.position.x, this.position.y);
-            }
-
-            if (this.rotation !== 0) {
-                this.transformMatrix = geo.affineTransformRotate(this.transformMatrix, -geo.degreesToRadians(this.rotation));
-            }
-            if (!(this.scaleX == 1 && this.scaleY == 1)) {
-                this.transformMatrix = geo.affineTransformScale(this.transformMatrix, this.scaleX, this.scaleY);
-            }
-
-            if (!geo.pointEqualToPoint(this.anchorPointInPixels, ccp(0, 0))) {
-                this.transformMatrix = geo.affineTransformTranslate(this.transformMatrix, -this.anchorPointInPixels.x, -this.anchorPointInPixels.y);
-            }
-
-            this.set('isTransformDirty', false);
-
-        }
-
-        return this.transformMatrix;
-    },
-
-    parentToNodeTransform: function () {
-        // TODO
-    },
-
-    nodeToWorldTransform: function () {
-        var t = this.nodeToParentTransform();
-
-        var p;
-        for (p = this.get('parent'); p; p = p.get('parent')) {
-            t = geo.affineTransformConcat(t, p.nodeToParentTransform());
-        }
-
-        return t;
-    },
-
-    worldToNodeTransform: function () {
-        return geo.affineTransformInvert(this.nodeToWorldTransform());
-    },
-
-    convertToNodeSpace: function (worldPoint) {
-        return geo.pointApplyAffineTransform(worldPoint, this.worldToNodeTransform());
-    },
-
-    /**
-     * @getter boundingBox
-     * @type geometry.Rect
-     */
-    get_boundingBox: function () {
-        var cs = this.get('contentSize');
-        var rect = geo.rectMake(0, 0, cs.width, cs.height);
-        rect = geo.rectApplyAffineTransform(rect, this.nodeToParentTransform());
-        return rect;
-    },
-
-    /**
-     * @getter worldBoundingBox
-     * @type geometry.Rect
-     */
-    get_worldBoundingBox: function () {
-        var cs = this.get('contentSize');
-
-        var rect = geo.rectMake(0, 0, cs.width, cs.height);
-        rect = geo.rectApplyAffineTransform(rect, this.nodeToWorldTransform());
-        return rect;
-    },
-
-    /**
-     * The area of the node currently visible on screen. Returns an rect even
-     * if visible is false.
-     *
-     * @getter visibleRect
-     * @type geometry.Rect
-     */
-    get_visibleRect: function () {
-        var s = require('../Director').Director.get('sharedDirector').get('winSize');
-        var rect = new geo.Rect(
-            0, 0,
-            s.width, s.height
-        );
-
-        return geo.rectApplyAffineTransform(rect, this.worldToNodeTransform());
-    },
-
-    /**
-     * @private
-     */
-    _dirtyTransform: function () {
-        this.set('isTransformDirty', true);
-    },
-
-    /**
-     * Schedules a custom method with an interval time in seconds.
-     * If time is 0 it will be ticked every frame.
-     * If time is 0, it is recommended to use 'scheduleUpdate' instead.
-     * 
-     * If the method is already scheduled, then the interval parameter will
-     * be updated without scheduling it again.
-     *
-     * @opt {String|Function} method Function of method name to schedule
-     * @opt {Float} [interval=0] Interval in seconds
-     */
-    schedule: function (opts) {
-        if (typeof opts == 'string') {
-            return this.schedule({method: opts, interval: 0});
-        }
-
-        opts.interval = opts.interval || 0;
-
-        Scheduler.get('sharedScheduler').schedule({target: this, method: opts.method, interval: opts.interval, paused: this.isRunning});
-    },
-
-    /**
-     * Unschedules a custom method
-     *
-     * @param {String|Function} method
-     */
-    unschedule: function (method) {
-        if (!method) {
-            return;
-        }
-
-        if (typeof method == 'string') {
-            method = this[method];
-        }
-        
-        Scheduler.get('sharedScheduler').unschedule({target: this, method: method});
-    }
-
-});
-
-module.exports.Node = Node;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/Node.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/PreloadScene.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var Scene       = require('./Scene').Scene,
-    Director    = require('../Director').Director,
-    Label       = require('./Label').Label,
-    ProgressBar = require('./ProgressBar').ProgressBar,
-    Preloader   = require('preloader').Preloader,
-    RemoteResource = require('remote_resources').RemoteResource,
-    geo         = require('geometry'),
-    util        = require('util'),
-    events      = require('events');
-
-var PreloadScene = Scene.extend(/** @lends cocos.nodes.PreloadScene# */{
-    progressBar: null,
-    label: null,
-    preloader: null,
-    isReady: false, // True when both progress bar images have loaded
-    emptyImage: "/libs/cocos2d/resources/progress-bar-empty.png",
-    fullImage:  "/libs/cocos2d/resources/progress-bar-full.png",
-
-    /**
-     * @memberOf cocos.nodes
-     * @extends cocos.nodes.Scene
-     * @constructs
-     */
-    init: function (opts) {
-        PreloadScene.superclass.init.call(this, opts);
-        var size = Director.get('sharedDirector').get('winSize');
-
-        // Setup 'please wait' label
-        var label = Label.create({
-            fontSize: 14,
-            fontName: 'Helvetica',
-            fontColor: '#ffffff',
-            string: 'Please wait...'
-        });
-        label.set('position', new geo.Point(size.width / 2, (size.height / 2) + 32));
-        this.set('label', label);
-        this.addChild({child: label});
-
-        // Setup preloader
-        var preloader = new Preloader();    // The main preloader
-        preloader.addEverythingToQueue()
-        this.set('preloader', preloader);
-
-        // Listen for preload events
-        events.addListener(preloader, 'load', function (preloader, uri) {
-            var loaded = preloader.loaded,
-                count = preloader.count;
-            events.trigger(this, 'load', preloader, uri);
-        }.bind(this));
-
-        events.addListener(preloader, 'complete', function (preloader) {
-            events.trigger(this, 'complete', preloader);
-        }.bind(this));
-
-
-
-
-        // Preloader for the loading screen resources
-        var loadingPreloader = new Preloader([this.get('emptyImage'), this.get('fullImage')])
-
-        // When loading screen resources have loaded then draw them
-        events.addListener(loadingPreloader, 'complete', function (preloader) {
-            this.createProgressBar();
-            if (this.get('isRunning')) {
-                this.get('preloader').load();
-            }
-
-            this.isReady = true;
-        }.bind(this));
-
-        loadingPreloader.load()
-    },
-
-    createProgressBar: function () {
-        var preloader = this.get('preloader'),
-            size = Director.get('sharedDirector').get('winSize');
-
-        var progressBar = ProgressBar.create({
-            emptyImage: "/libs/cocos2d/resources/progress-bar-empty.png",
-            fullImage:  "/libs/cocos2d/resources/progress-bar-full.png"
-        });
-
-        progressBar.set('position', new geo.Point(size.width / 2, size.height / 2));
-
-        this.set('progressBar', progressBar);
-        this.addChild({child: progressBar});
-
-        events.addListener(preloader, 'load', function (preloader, uri) {
-            progressBar.set('maxValue', preloader.count);
-            progressBar.set('value', preloader.loaded);
-        })
-    },
-
-    onEnter: function () {
-        PreloadScene.superclass.onEnter.call(this);
-        var preloader = this.get('preloader');
-
-        // Preload everything
-        if (this.isReady) {
-            preloader.load();
-        }
-    }
-});
-
-exports.PreloadScene = PreloadScene;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/PreloadScene.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/ProgressBar.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var Node   = require('./Node').Node,
-    util   = require('util'),
-    geo    = require('geometry'),
-    events = require('events'),
-    Sprite = require('./Sprite').Sprite;
-
-var ProgressBar = Node.extend(/** @lends cocos.nodes.ProgressBar# */{
-    emptySprite: null,
-    fullSprite: null,
-    maxValue: 100,
-    value: 0,
-
-    /**
-     * @memberOf cocos.nodes
-     * @extends cocos.nodes.Node
-     * @constructs
-     */
-    init: function (opts) {
-        ProgressBar.superclass.init.call(this, opts);
-        var size = new geo.Size(272, 32);
-        this.set('contentSize', size);
-
-        var s;
-        if (opts.emptyImage) {
-            s = Sprite.create({file: opts.emptyImage, rect: new geo.Rect(0, 0, size.width, size.height)});
-            s.set('anchorPoint', new geo.Point(0, 0));
-            this.set('emptySprite', s);
-            this.addChild({child: s});
-        }
-        if (opts.fullImage) {
-            s = Sprite.create({file: opts.fullImage, rect: new geo.Rect(0, 0, 0, size.height)});
-            s.set('anchorPoint', new geo.Point(0, 0));
-            this.set('fullSprite', s);
-            this.addChild({child: s});
-        }
-
-        events.addListener(this, 'maxvalue_changed', util.callback(this, 'updateImages'));
-        events.addListener(this, 'value_changed', util.callback(this, 'updateImages'));
-
-        this.updateImages();
-    },
-
-    updateImages: function () {
-        var empty = this.get('emptySprite'),
-            full  = this.get('fullSprite'),
-            value = this.get('value'),
-            size  = this.get('contentSize'),
-            maxValue = this.get('maxValue'),
-            ratio = (value / maxValue);
-
-        var diff = Math.round(size.width * ratio);
-        if (diff === 0) {
-            full.set('visible', false);
-        } else {
-            full.set('visible', true);
-            full.set('rect', new geo.Rect(0, 0, diff, size.height));
-            full.set('contentSize', new geo.Size(diff, size.height));
-        }
-
-        if ((size.width - diff) === 0) {
-            empty.set('visible', false);
-        } else {
-            empty.set('visible', true);
-            empty.set('rect', new geo.Rect(diff, 0, size.width - diff, size.height));
-            empty.set('position', new geo.Point(diff, 0));
-            empty.set('contentSize', new geo.Size(size.width - diff, size.height));
-        }
-    }
-});
-
-exports.ProgressBar = ProgressBar;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/ProgressBar.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/RenderTexture.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray FLIP_Y_AXIS*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    evt = require('events'),
-    Node = require('./Node').Node,
-    geo = require('geometry'),
-    Sprite = require('./Sprite').Sprite,
-    TextureAtlas = require('../TextureAtlas').TextureAtlas,
-    ccp = geo.ccp;
-
-var RenderTexture = Node.extend(/** @lends cocos.nodes.RenderTexture# */{
-    canvas: null,
-    context: null,
-    sprite: null,
-
-    /** 
-     * An in-memory canvas which can be drawn to in the background before drawing on screen
-     *
-     * @memberOf cocos.nodes
-     * @constructs
-     * @extends cocos.nodes.Node
-     *
-     * @opt {Integer} width The width of the canvas
-     * @opt {Integer} height The height of the canvas
-     */
-    init: function (opts) {
-        RenderTexture.superclass.init.call(this, opts);
-
-        var width = opts.width,
-            height = opts.height;
-
-        evt.addListener(this, 'contentsize_changed', util.callback(this, this._resizeCanvas));
-
-        this.canvas = document.createElement('canvas');
-        this.context = this.canvas.getContext('2d');
-
-        var atlas = TextureAtlas.create({canvas: this.canvas});
-        this.sprite = Sprite.create({textureAtlas: atlas, rect: {origin: ccp(0, 0), size: {width: width, height: height}}});
-
-        this.set('contentSize', geo.sizeMake(width, height));
-        this.addChild(this.sprite);
-        this.set('anchorPoint', ccp(0, 0));
-        this.sprite.set('anchorPoint', ccp(0, 0));
-
-    },
-
-    /**
-     * @private
-     */
-    _resizeCanvas: function () {
-        var size = this.get('contentSize'),
-            canvas = this.get('canvas');
-
-        canvas.width  = size.width;
-        canvas.height = size.height;
-        if (FLIP_Y_AXIS) {
-            this.context.scale(1, -1);
-            this.context.translate(0, -canvas.height);
-        }
-
-        var s = this.get('sprite');
-        if (s) {
-            s.set('textureRect', {rect: geo.rectMake(0, 0, size.width, size.height)});
-        }
-    },
-
-    /**
-     * Clear the canvas
-     */
-    clear: function (rect) {
-        if (rect) {
-            this.context.clearRect(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
-        } else {
-            this.canvas.width = this.canvas.width;
-            if (FLIP_Y_AXIS) {
-                this.context.scale(1, -1);
-                this.context.translate(0, -this.canvas.height);
-            }
-        }
-    }
-});
-
-module.exports.RenderTexture = RenderTexture;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/RenderTexture.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/Scene.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var Node = require('./Node').Node,
-    geo = require('geometry');
-
-var Scene = Node.extend(/** @lends cocos.nodes.Scene */{
-    /**
-     * Everything in your view will be a child of this object. You need at least 1 scene per app.
-     *
-     * @memberOf cocos.nodes
-     * @constructs
-     * @extends cocos.nodes.Node
-     */
-    init: function () {
-        Scene.superclass.init.call(this);
-
-
-        var Director = require('../Director').Director;
-        var s = Director.get('sharedDirector').get('winSize');
-        this.set('isRelativeAnchorPoint', false);
-        this.anchorPoint = new geo.Point(0.5, 0.5);
-        this.set('contentSize', s);
-    }
-
-});
-
-module.exports.Scene = Scene;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/Scene.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/Sprite.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    evt = require('events'),
-    Director = require('../Director').Director,
-    TextureAtlas = require('../TextureAtlas').TextureAtlas,
-    Node = require('./Node').Node,
-    geo = require('geometry'),
-    ccp = geo.ccp;
-
-var Sprite = Node.extend(/** @lends cocos.nodes.Sprite# */{
-    textureAtlas: null,
-    rect: null,
-    dirty: true,
-    recursiveDirty: true,
-    quad: null,
-    flipX: false,
-    flipY: false,
-    offsetPosition: null,
-    unflippedOffsetPositionFromCenter: null,
-    untrimmedSize: null,
-
-    /**
-     * A small 2D graphics than can be animated
-     *
-     * @memberOf cocos.nodes
-     * @constructs
-     * @extends cocos.nodes.Node
-     *
-     * @opt {String} file Path to image to use as sprite atlas
-     * @opt {Rect} [rect] The rect in the sprite atlas image file to use as the sprite
-     */
-    init: function (opts) {
-        Sprite.superclass.init.call(this, opts);
-
-        opts = opts || {};
-
-        var file         = opts.file,
-            textureAtlas = opts.textureAtlas,
-            texture      = opts.texture,
-            frame        = opts.frame,
-            spritesheet  = opts.spritesheet,
-            rect         = opts.rect;
-
-        this.set('offsetPosition', ccp(0, 0));
-        this.set('unflippedOffsetPositionFromCenter', ccp(0, 0));
-
-
-        if (frame) {
-            texture = frame.get('texture');
-            rect    = frame.get('rect');
-        }
-
-        util.each(['scale', 'scaleX', 'scaleY', 'rect', 'flipX', 'flipY', 'contentSize'], util.callback(this, function (key) {
-            evt.addListener(this, key.toLowerCase() + '_changed', util.callback(this, this._updateQuad));
-        }));
-        evt.addListener(this, 'textureatlas_changed', util.callback(this, this._updateTextureQuad));
-
-        if (file || texture) {
-            textureAtlas = TextureAtlas.create({file: file, texture: texture});
-        } else if (spritesheet) {
-            textureAtlas = spritesheet.get('textureAtlas');
-            this.set('useSpriteSheet', true);
-        } else if (!textureAtlas) {
-            //throw "Sprite has no texture";
-        }
-
-        if (!rect && textureAtlas) {
-            rect = {origin: ccp(0, 0), size: {width: textureAtlas.texture.size.width, height: textureAtlas.texture.size.height}};
-        }
-
-        if (rect) {
-            this.set('rect', rect);
-            this.set('contentSize', rect.size);
-
-            this.quad = {
-                drawRect: {origin: ccp(0, 0), size: rect.size},
-                textureRect: rect
-            };
-        }
-
-        this.set('textureAtlas', textureAtlas);
-
-        if (frame) {
-            this.set('displayFrame', frame);
-        }
-    },
-
-    /**
-     * @private
-     */
-    _updateTextureQuad: function (obj, key, texture, oldTexture) {
-        if (oldTexture) {
-            oldTexture.removeQuad({quad: this.get('quad')});
-        }
-
-        if (texture) {
-            texture.insertQuad({quad: this.get('quad')});
-        }
-    },
-
-    /**
-     * @setter textureCoords
-     * @type geometry.Rect
-     */
-    set_textureCoords: function (rect) {
-        var quad = this.get('quad');
-        if (!quad) {
-            quad = {
-                drawRect: geo.rectMake(0, 0, 0, 0), 
-                textureRect: geo.rectMake(0, 0, 0, 0)
-            };
-        }
-
-        quad.textureRect = util.copy(rect);
-
-        this.set('quad', quad);
-    },
-
-    /**
-     * @setter textureRect
-     * @type geometry.Rect
-     */
-    set_textureRect: function (opts) {
-        var rect = opts.rect,
-            rotated = !!opts.rotated,
-            untrimmedSize = opts.untrimmedSize || rect.size;
-
-        this.set('contentSize', untrimmedSize);
-        this.set('rect', util.copy(rect));
-        this.set('textureCoords', rect);
-
-        var quad = this.get('quad');
-
-        var relativeOffset = util.copy(this.get('unflippedOffsetPositionFromCenter'));
-
-        if (this.get('flipX')) {
-            relativeOffset.x = -relativeOffset.x;
-        }
-        if (this.get('flipY')) {
-            relativeOffset.y = -relativeOffset.y;
-        }
-
-        var offsetPosition = util.copy(this.get('offsetPosition'));
-        offsetPosition.x =  relativeOffset.x + (this.get('contentSize').width  - rect.size.width) / 2;
-        offsetPosition.y = -relativeOffset.y + (this.get('contentSize').height - rect.size.height) / 2;
-
-        quad.drawRect.origin = util.copy(offsetPosition);
-        quad.drawRect.size = util.copy(rect.size);
-        if (this.flipX) {
-            quad.drawRect.size.width *= -1;
-            quad.drawRect.origin.x = -rect.size.width;
-        }
-        if (this.flipY) {
-            quad.drawRect.size.height *= -1;
-            quad.drawRect.origin.y = -rect.size.height;
-        }
-
-        this.set('quad', quad);
-    },
-
-    /**
-     * @private
-     */
-    _updateQuad: function () {
-        if (!this.get('rect')) {
-            return;
-        }
-        if (!this.quad) {
-            this.quad = {
-                drawRect: geo.rectMake(0, 0, 0, 0), 
-                textureRect: geo.rectMake(0, 0, 0, 0)
-            };
-        }
-
-        var relativeOffset = util.copy(this.get('unflippedOffsetPositionFromCenter'));
-
-        if (this.get('flipX')) {
-            relativeOffset.x = -relativeOffset.x;
-        }
-        if (this.get('flipY')) {
-            relativeOffset.y = -relativeOffset.y;
-        }
-
-        var offsetPosition = util.copy(this.get('offsetPosition'));
-        offsetPosition.x = relativeOffset.x + (this.get('contentSize').width  - this.get('rect').size.width) / 2;
-        offsetPosition.y = relativeOffset.y + (this.get('contentSize').height - this.get('rect').size.height) / 2;
-
-        this.quad.textureRect = util.copy(this.rect);
-        this.quad.drawRect.origin = util.copy(offsetPosition);
-        this.quad.drawRect.size = util.copy(this.rect.size);
-
-        if (this.flipX) {
-            this.quad.drawRect.size.width *= -1;
-            this.quad.drawRect.origin.x = -this.rect.size.width;
-        }
-        if (this.flipY) {
-            this.quad.drawRect.size.height *= -1;
-            this.quad.drawRect.origin.y = -this.rect.size.height;
-        }
-    },
-
-    updateTransform: function (ctx) {
-        if (!this.useSpriteSheet) {
-            throw "updateTransform is only valid when Sprite is being rendered using a SpriteSheet";
-        }
-
-        if (!this.visible) {
-            this.set('dirty', false);
-            this.set('recursiveDirty', false);
-            return;
-        }
-
-        // TextureAtlas has hard reference to this quad so we can just update it directly
-        this.quad.drawRect.origin = {
-            x: this.position.x - this.anchorPointInPixels.x * this.scaleX,
-            y: this.position.y - this.anchorPointInPixels.y * this.scaleY
-        };
-        this.quad.drawRect.size = {
-            width: this.rect.size.width * this.scaleX,
-            height: this.rect.size.height * this.scaleY
-        };
-
-        this.set('dirty', false);
-        this.set('recursiveDirty', false);
-    },
-
-    draw: function (ctx) {
-        if (!this.quad) {
-            return;
-        }
-        this.get('textureAtlas').drawQuad(ctx, this.quad);
-    },
-
-    isFrameDisplayed: function (frame) {
-        if (!this.rect || !this.textureAtlas) {
-            return false;
-        }
-        return (frame.texture === this.textureAtlas.texture && geo.rectEqualToRect(frame.rect, this.rect));
-    },
-
-
-    /**
-     * @setter displayFrame
-     * @type cocos.SpriteFrame
-     */
-    set_displayFrame: function (frame) {
-        if (!frame) {
-            delete this.quad;
-            return;
-        }
-        this.set('unflippedOffsetPositionFromCenter', util.copy(frame.offset));
-
-
-        // change texture
-        if (!this.textureAtlas || frame.texture !== this.textureAtlas.texture) {
-            this.set('textureAtlas', TextureAtlas.create({texture: frame.texture}));
-        }
-
-        this.set('textureRect', {rect: frame.rect, rotated: frame.rotated, untrimmedSize: frame.originalSize});
-    }
-});
-
-module.exports.Sprite = Sprite;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/Sprite.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/TMXLayer.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray FLIP_Y_AXIS*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    SpriteBatchNode = require('./BatchNode').SpriteBatchNode,
-    Sprite = require('./Sprite').Sprite,
-    TMXOrientationOrtho = require('../TMXOrientation').TMXOrientationOrtho,
-    TMXOrientationHex   = require('../TMXOrientation').TMXOrientationHex,
-    TMXOrientationIso   = require('../TMXOrientation').TMXOrientationIso,
-    geo    = require('geometry'),
-    ccp    = geo.ccp,
-    Node = require('./Node').Node;
-
-var TMXLayer = SpriteBatchNode.extend(/** @lends cocos.nodes.TMXLayer# */{
-    layerSize: null,
-    layerName: '',
-    tiles: null,
-    tilset: null,
-    layerOrientation: 0,
-    mapTileSize: null,
-    properties: null,
-
-    /** 
-     * A tile map layer loaded from a TMX file. This will probably automatically be made by cocos.TMXTiledMap
-     *
-     * @memberOf cocos.nodes
-     * @constructs
-     * @extends cocos.nodes.SpriteBatchNode
-     *
-     * @opt {cocos.TMXTilesetInfo} tilesetInfo
-     * @opt {cocos.TMXLayerInfo} layerInfo
-     * @opt {cocos.TMXMapInfo} mapInfo
-     */
-    init: function (opts) {
-        var tilesetInfo = opts.tilesetInfo,
-            layerInfo = opts.layerInfo,
-            mapInfo = opts.mapInfo;
-
-        var size = layerInfo.get('layerSize'),
-            totalNumberOfTiles = size.width * size.height;
-
-        var tex = null;
-        if (tilesetInfo) {
-            tex = tilesetInfo.sourceImage;
-        }
-
-        TMXLayer.superclass.init.call(this, {file: tex});
-
-        this.set('anchorPoint', ccp(0, 0));
-
-        this.layerName = layerInfo.get('name');
-        this.layerSize = layerInfo.get('layerSize');
-        this.tiles = layerInfo.get('tiles');
-        this.minGID = layerInfo.get('minGID');
-        this.maxGID = layerInfo.get('maxGID');
-        this.opacity = layerInfo.get('opacity');
-        this.properties = util.copy(layerInfo.properties);
-
-        this.tileset = tilesetInfo;
-        this.mapTileSize = mapInfo.get('tileSize');
-        this.layerOrientation = mapInfo.get('orientation');
-
-        var offset = this.calculateLayerOffset(layerInfo.get('offset'));
-        this.set('position', offset);
-
-        this.set('contentSize', geo.sizeMake(this.layerSize.width * this.mapTileSize.width, (this.layerSize.height * (this.mapTileSize.height - 1)) + this.tileset.tileSize.height));
-    },
-
-    calculateLayerOffset: function (pos) {
-        var ret = ccp(0, 0);
-
-        switch (this.layerOrientation) {
-        case TMXOrientationOrtho:
-            ret = ccp(pos.x * this.mapTileSize.width, pos.y * this.mapTileSize.height);
-            break;
-        case TMXOrientationIso:
-            // TODO
-            break;
-        case TMXOrientationHex:
-            // TODO
-            break;
-        }
-
-        return ret;
-    },
-
-    setupTiles: function () {
-        this.tileset.bindTo('imageSize', this.get('texture'), 'contentSize');
-
-
-        for (var y = 0; y < this.layerSize.height; y++) {
-            for (var x = 0; x < this.layerSize.width; x++) {
-                
-                var pos = x + this.layerSize.width * y,
-                    gid = this.tiles[pos];
-                
-                if (gid !== 0) {
-                    this.appendTile({gid: gid, position: ccp(x, y)});
-                    
-                    // Optimization: update min and max GID rendered by the layer
-                    this.minGID = Math.min(gid, this.minGID);
-                    this.maxGID = Math.max(gid, this.maxGID);
-                }
-            }
-        }
-    },
-    appendTile: function (opts) {
-        var gid = opts.gid,
-            pos = opts.position;
-
-        var z = pos.x + pos.y * this.layerSize.width;
-            
-        var rect = this.tileset.rectForGID(gid);
-        var tile = Sprite.create({rect: rect, textureAtlas: this.textureAtlas});
-        tile.set('position', this.positionAt(pos));
-        tile.set('anchorPoint', ccp(0, 0));
-        tile.set('opacity', this.get('opacity'));
-        
-        this.addChild({child: tile, z: 0, tag: z});
-    },
-    positionAt: function (pos) {
-        switch (this.layerOrientation) {
-        case TMXOrientationOrtho:
-            return this.positionForOrthoAt(pos);
-        case TMXOrientationIso:
-            return this.positionForIsoAt(pos);
-        /*
-        case TMXOrientationHex:
-            // TODO
-        */
-        default:
-            return ccp(0, 0);
-        }
-    },
-    positionForOrthoAt: function (pos) {
-        var overlap = this.mapTileSize.height - this.tileset.tileSize.height;
-        var x = Math.floor(pos.x * this.mapTileSize.width + 0.49);
-        var y;
-        if (FLIP_Y_AXIS) {
-            y = Math.floor((this.get('layerSize').height - pos.y - 1) * this.mapTileSize.height + 0.49);
-        } else {
-            y = Math.floor(pos.y * this.mapTileSize.height + 0.49) + overlap;
-        }
-        return ccp(x, y);
-    },
-
-    positionForIsoAt: function (pos) {
-        var mapTileSize = this.get('mapTileSize'),
-            layerSize = this.get('layerSize');
-
-        if (FLIP_Y_AXIS) {
-            return ccp(
-                mapTileSize.width  / 2 * (layerSize.width + pos.x - pos.y - 1),
-                mapTileSize.height / 2 * ((layerSize.height * 2 - pos.x - pos.y) - 2)
-            );
-        } else {
-            throw "Isometric tiles without FLIP_Y_AXIS is currently unsupported";
-        }
-    },
-
-    /**
-     * Get the tile at a specifix tile coordinate
-     *
-     * @param {geometry.Point} pos Position of tile to get in tile coordinates (not pixels)
-     * @returns {cocos.nodes.Sprite} The tile
-     */
-    tileAt: function (pos) {
-        var layerSize = this.get('layerSize'),
-            tiles = this.get('tiles');
-
-        if (pos.x < 0 || pos.y < 0 || pos.x >= layerSize.width || pos.y >= layerSize.height) {
-            throw "TMX Layer: Invalid position";
-        }
-
-        var tile,
-            gid = this.tileGIDAt(pos);
-
-        // if GID is 0 then no tile exists at that point
-        if (gid) {
-            var z = pos.x + pos.y * layerSize.width;
-            tile = this.getChild({tag: z});
-        }
-
-        return tile;
-    },
-
-
-    tileGID: function (pos) {
-        var tilesPerRow = this.get('layerSize').width,
-            tilePos = pos.x + (pos.y * tilesPerRow);
-
-        return this.tiles[tilePos];
-    },
-    tileGIDAt: function (pos) {
-        return this.tileGID(pos);
-    },
-
-    removeTile: function (pos) {
-        var gid = this.tileGID(pos);
-        if (gid === 0) {
-            // Tile is already blank
-            return;
-        }
-
-        var tiles = this.get('tiles'),
-            tilesPerRow = this.get('layerSize').width,
-            tilePos = pos.x + (pos.y * tilesPerRow);
-
-
-        tiles[tilePos] = 0;
-
-        var sprite = this.getChild({tag: tilePos});
-        if (sprite) {
-            this.removeChild({child: sprite});
-        }
-    }
-});
-
-exports.TMXLayer = TMXLayer;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/TMXLayer.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/TMXTiledMap.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray console*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    geo = require('geometry'),
-    ccp = geo.ccp,
-    Node = require('./Node').Node,
-    TMXOrientationOrtho = require('../TMXOrientation').TMXOrientationOrtho,
-    TMXOrientationHex   = require('../TMXOrientation').TMXOrientationHex,
-    TMXOrientationIso   = require('../TMXOrientation').TMXOrientationIso,
-    TMXLayer   = require('./TMXLayer').TMXLayer,
-    TMXMapInfo = require('../TMXXMLParser').TMXMapInfo;
-
-var TMXTiledMap = Node.extend(/** @lends cocos.nodes.TMXTiledMap# */{
-    mapSize: null,
-    tileSize: null,
-    mapOrientation: 0,
-    objectGroups: null,
-    properties: null,
-    tileProperties: null,
-
-    /**
-     * A TMX Map loaded from a .tmx file
-     *
-     * @memberOf cocos.nodes
-     * @constructs
-     * @extends cocos.nodes.Node
-     *
-     * @opt {String} file The file path of the TMX map to load
-     */
-    init: function (opts) {
-        TMXTiledMap.superclass.init.call(this, opts);
-
-        this.set('anchorPoint', ccp(0, 0));
-
-        var mapInfo = TMXMapInfo.create(opts.file);
-
-        this.mapSize        = mapInfo.get('mapSize');
-        this.tileSize       = mapInfo.get('tileSize');
-        this.mapOrientation = mapInfo.get('orientation');
-        this.objectGroups   = mapInfo.get('objectGroups');
-        this.properties     = mapInfo.get('properties');
-        this.tileProperties = mapInfo.get('tileProperties');
-
-        // Add layers to map
-        var idx = 0;
-        util.each(mapInfo.layers, util.callback(this, function (layerInfo) {
-            if (layerInfo.get('visible')) {
-                var child = this.parseLayer({layerInfo: layerInfo, mapInfo: mapInfo});
-                this.addChild({child: child, z: idx, tag: idx});
-
-                var childSize   = child.get('contentSize');
-                var currentSize = this.get('contentSize');
-                currentSize.width  = Math.max(currentSize.width,  childSize.width);
-                currentSize.height = Math.max(currentSize.height, childSize.height);
-                this.set('contentSize', currentSize);
-
-                idx++;
-            }
-        }));
-    },
-    
-    parseLayer: function (opts) {
-        var tileset = this.tilesetForLayer(opts);
-        var layer = TMXLayer.create({tilesetInfo: tileset, layerInfo: opts.layerInfo, mapInfo: opts.mapInfo});
-
-        layer.setupTiles();
-
-        return layer;
-    },
-
-    tilesetForLayer: function (opts) {
-        var layerInfo = opts.layerInfo,
-            mapInfo = opts.mapInfo,
-            size = layerInfo.get('layerSize');
-
-        // Reverse loop
-        var tileset;
-        for (var i = mapInfo.tilesets.length - 1; i >= 0; i--) {
-            tileset = mapInfo.tilesets[i];
-
-            for (var y = 0; y < size.height; y++) {
-                for (var x = 0; x < size.width; x++) {
-                    var pos = x + size.width * y, 
-                        gid = layerInfo.tiles[pos];
-
-                    if (gid !== 0 && gid >= tileset.firstGID) {
-                        return tileset;
-                    }
-                } // for (var x
-            } // for (var y
-        } // for (var i
-
-        //console.log("cocos2d: Warning: TMX Layer '%s' has no tiles", layerInfo.name);
-        return tileset;
-    },
-
-    /**
-     * Get a layer
-     *
-     * @opt {String} name The name of the layer to get
-     * @returns {cocos.nodes.TMXLayer} The layer requested
-     */
-    getLayer: function (opts) {
-        var layerName = opts.name,
-            layer = null;
-
-        this.get('children').forEach(function (item) {
-            if (item instanceof TMXLayer && item.layerName == layerName) {
-                layer = item;
-            }
-        });
-        if (layer !== null) {
-            return layer;
-        }
-    },
-    
-    /**
-     * Return the ObjectGroup for the secific group
-     *
-     * @opt {String} name The object group name
-     * @returns {cocos.TMXObjectGroup} The object group
-     */
-    getObjectGroup: function (opts) {
-        var objectGroupName = opts.name,
-            objectGroup = null;
-
-        this.objectGroups.forEach(function (item) {
-            if (item.name == objectGroupName) {
-                objectGroup = item;
-            }
-        });
-        if (objectGroup !== null) {
-            return objectGroup;
-        }
-    },
-
-    /**
-     * @deprected Since v0.2. You should now use cocos.TMXTiledMap#getObjectGroup.
-     */
-    objectGroupNamed: function (opts) {
-        console.warn('TMXTiledMap#objectGroupNamed is deprected. Use TMXTiledMap#getObjectGroup instread');
-        return this.getObjectGroup(opts);
-    }
-});
-
-exports.TMXTiledMap = TMXTiledMap;
-
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/TMXTiledMap.js
-
-
-__jah__.resources["/libs/cocos2d/nodes/Transition.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var geo             = require('geometry'),
-    util            = require('util'),
-    actions         = require('../actions'),
-    Scene           = require('./Scene').Scene,
-    Director        = require('../Director').Director,
-    EventDispatcher = require('../EventDispatcher').EventDispatcher,
-    Scheduler       = require('../Scheduler').Scheduler;
-
-/** @ignore
- * Orientation Type used by some transitions
- */
-var tOrientation = {
-    kOrientationLeftOver: 0,
-    kOrientationRightOver: 1,
-    kOrientationUpOver: 0,
-    kOrientationDownOver: 1
-};
-
-var TransitionScene = Scene.extend(/** @lends cocos.nodes.TransitionScene# */{
-    /**
-     * Incoming scene
-     * @type {cocos.nodes.Scene}
-     */
-    inScene: null,
-
-    /**
-     * Outgoing (current) scene
-     * @type {cocos.nodes.Scene}
-     */
-    outScene: null,
-
-    /**
-     * transition duration
-     * @type Float
-     */
-    duration: null,
-
-    inSceneOnTop: null,
-    sendCleanupToScene: null,
-
-    /**
-     * @class Base class for Transition scenes
-     *
-     * @memberOf cocos.nodes
-     * @extends cocos.nodes.Scene
-     * @constructs
-     *
-     * @opt {Float} duration How long the transition should last
-     * @opt {cocos.nodes.Scene} scene Income scene
-     */
-    init: function (opts) {
-        TransitionScene.superclass.init.call(this, opts);
-
-        this.set('duration', opts.duration);
-        if (!opts.scene) {
-            throw "TransitionScene requires scene property";
-        }
-        this.set('inScene', opts.scene);
-        this.set('outScene', Director.get('sharedDirector')._runningScene);
-
-        if (this.inScene == this.outScene) {
-            throw "Incoming scene must be different from the outgoing scene";
-        }
-        EventDispatcher.get('sharedDispatcher').set('dispatchEvents', false);
-        this.sceneOrder();
-    },
-
-    /**
-     * Called after the transition finishes
-     */
-    finish: function () {
-        var is = this.get('inScene'),
-            os = this.get('outScene');
-
-        /* clean up */
-        is.set('visible', true);
-        is.set('position', geo.PointZero());
-        is.set('scale', 1.0);
-        is.set('rotation', 0);
-
-        os.set('visible', false);
-        os.set('position', geo.PointZero());
-        os.set('scale', 1.0);
-        os.set('rotation', 0);
-
-        Scheduler.get('sharedScheduler').schedule({
-            target: this,
-            method: this.setNewScene,
-            interval: 0
-        });
-    },
-
-    /**
-     * Used by some transitions to hide the outer scene
-     */
-    hideOutShowIn: function () {
-        this.get('inScene').set('visible', true);
-        this.get('outScene').set('visible', false);
-    },
-    
-    setNewScene: function (dt) {
-        var dir = Director.get('sharedDirector');
-        
-        this.unscheduleSelector(this.setNewScene);
-        // Save 'send cleanup to scene'
-        // Not sure if it's cool to be accessing all these Director privates like this...
-        this.set('sendCleanupToScene', dir._sendCleanupToScene);
-        
-        dir.replaceScene(this.get('inScene'));
-        
-        // enable events while transitions
-        EventDispatcher.get('sharedDispatcher').set('dispatchEvents', true);
-
-        // issue #267 
-        this.get('outScene').set('visible', true);
-    },
-
-    sceneOrder: function () {
-        this.set('inSceneOnTop', true);
-    },
-
-    draw: function (context, rect) {
-        if (this.get('inSceneOnTop')) {
-            this.get('outScene').visit(context, rect);
-            this.get('inScene').visit(context, rect);
-        } else {
-            this.get('inScene').visit(context, rect);
-            this.get('outScene').visit(context, rect);
-        }
-    },
-    
-    onEnter: function () {
-        TransitionScene.superclass.onEnter.call(this);
-        this.get('inScene').onEnter();
-        // outScene_ should not receive the onEnter callback
-    },
-
-    onExit: function () {
-        TransitionScene.superclass.onExit.call(this);
-        this.get('outScene').onExit();
-        // inScene_ should not receive the onExit callback
-        // only the onEnterTransitionDidFinish
-        if (this.get('inScene').hasOwnProperty('onEnterTransitionDidFinish')) {
-            this.get('inScene').onEnterTransitionDidFinish();
-        }
-    },
-
-    cleanup: function () {
-        TransitionScene.superclass.cleanup.call(this);
-
-        if (this.get('sendCleanupToScene')) {
-            this.get('outScene').cleanup();
-        }
-    }
-});
-
-/**
- * @class Rotate and zoom out the outgoing scene, and then rotate and zoom in the incoming 
- *
- * @memberOf cocos.nodes
- * @extends cocos.nodes.TransitionScene
- */
-var TransitionRotoZoom = TransitionScene.extend(/** @lends cocos.nodes.TransitionRotoZoom# */{
-    onEnter: function() {
-        TransitionRotoZoom.superclass.onEnter.call(this);
-        
-        var dur = this.get('duration');
-        this.get('inScene').set('scale', 0.001);
-        this.get('outScene').set('scale', 1.0);
-        
-        this.get('inScene').set('anchorPoint', geo.ccp(0.5, 0.5));
-        this.get('outScene').set('anchorPoint', geo.ccp(0.5, 0.5));
-        
-        var outzoom = [
-            actions.Spawn.initWithActions({actions: [
-                actions.ScaleBy.create({scale: 0.001, duration: dur/2}),
-                actions.RotateBy.create({angle: 360*2, duration: dur/2})
-                ]}),
-            actions.DelayTime.create({duration: dur/2})];
-        
-        // Can't nest sequences or reverse them very easily, so incoming scene actions must be put 
-        // together manually for now...
-        var inzoom = [
-            actions.DelayTime.create({duration: dur/2}),
-            
-            actions.Spawn.initWithActions({actions: [
-                actions.ScaleTo.create({scale: 1.0, duration: dur/2}),
-                actions.RotateBy.create({angle: -360*2, duration: dur/2})
-                ]}),
-            actions.CallFunc.create({
-                target: this,
-                method: this.finish
-            })
-        ];
-        
-        // Sequence init() copies actions
-        this.get('outScene').runAction(actions.Sequence.create({actions: outzoom}));
-        this.get('inScene').runAction(actions.Sequence.create({actions: inzoom}));
-    }
-});
-
-/**
- * @class Move in from to the left the incoming scene.
- * @memberOf cocos.nodes
- * @extends cocos.nodes.TransitionScene
- */
-var TransitionMoveInL = TransitionScene.extend(/** @lends cocos.nodes.TransitionMoveInL# */{
-    onEnter: function () {
-        TransitionMoveInL.superclass.onEnter.call(this);
-
-        this.initScenes();
-
-        this.get('inScene').runAction(actions.Sequence.create({actions: [
-            this.action(),
-            actions.CallFunc.create({
-                target: this,
-                method: this.finish
-            })]
-        }));
-    },
-    
-    action: function () {
-        return actions.MoveTo.create({
-            position: geo.ccp(0, 0),
-            duration: this.get('duration')
-        });
-    },
-    
-    initScenes: function () {
-        var s = Director.get('sharedDirector').get('winSize');
-        this.get('inScene').set('position', geo.ccp(-s.width, 0));
-    }
-});
-    
-/**
- * @class Move in from to the right the incoming scene.
- * @memberOf cocos.nodes
- * @extends cocos.nodes.TransitionMoveInL
- */
-var TransitionMoveInR = TransitionMoveInL.extend(/** @lends cocos.nodes.TransitionMoveInR# */{
-    initScenes: function () {
-        var s = Director.get('sharedDirector').get('winSize');
-        this.get('inScene').set('position', geo.ccp(s.width, 0));
-    }
-});
-
-/**
- * @class Move the incoming scene in from the top.
- * @memberOf cocos.nodes
- * @extends cocos.nodes.TransitionMoveInL
- */
-var TransitionMoveInT = TransitionMoveInL.extend(/** @lends cocos.nodes.TransitionMoveInT# */{
-    initScenes: function () {
-        var s = Director.get('sharedDirector').get('winSize');
-        this.get('inScene').set('position', geo.ccp(0, s.height));
-    }
-});
-
-/**
- * @class Move the incoming scene in from the bottom.
- * @memberOf cocos.nodes
- * @extends cocos.nodes.TransitionMoveInL
- */
-var TransitionMoveInB = TransitionMoveInL.extend(/** @lends cocos.nodes.TransitionMoveInB# */{
-    initScenes: function () {
-        var s = Director.get('sharedDirector').get('winSize');
-        this.get('inScene').set('position', geo.ccp(0, -s.height));
-    }
-});
-
-/**
- * @class Slide in the incoming scene from the left.
- * @memberOf cocos.nodes
- * @extends cocos.nodes.TransitionScene
- */
-var TransitionSlideInL = TransitionScene.extend(/** @lends cocos.nodes.TransitionSlideInL# */{
-    onEnter: function () {
-        TransitionSlideInL.superclass.onEnter.call(this);
-
-        this.initScenes();
-
-        var movein = this.action();
-        var moveout = this.action();
-        var outAction = actions.Sequence.create({
-            actions: [
-            moveout, 
-            actions.CallFunc.create({
-                target: this,
-                method: this.finish
-            })]
-        });
-        this.get('inScene').runAction(movein);
-        this.get('outScene').runAction(outAction);
-    },
-
-    sceneOrder: function () {
-        this.set('inSceneOnTop', false);
-    },
-
-    initScenes: function () {
-        var s = Director.get('sharedDirector').get('winSize');
-        this.get('inScene').set('position', geo.ccp(-s.width, 0));
-    },
-    
-    action: function () {
-        var s = Director.get('sharedDirector').get('winSize');
-        return actions.MoveBy.create({
-            position: geo.ccp(s.width, 0),
-            duration: this.get('duration')
-        });
-    }
-});
-
-/** 
- * @class Slide in the incoming scene from the right.
- * @memberOf cocos.nodes
- * @extends cocos.nodes.TransitionSlideInL
- */
-var TransitionSlideInR = TransitionSlideInL.extend(/** @lends cocos.nodes.TransitionSlideInR# */{
-    sceneOrder: function () {
-        this.set('inSceneOnTop', true);
-    },
-
-    initScenes: function () {
-        var s = Director.get('sharedDirector').get('winSize');
-        this.get('inScene').set('position', geo.ccp(s.width, 0));
-    },
-    
-    action: function () {
-        var s = Director.get('sharedDirector').get('winSize');
-        return actions.MoveBy.create({
-            position: geo.ccp(-s.width, 0),
-            duration: this.get('duration')
-        });
-    }
-});
-
-/**
- * @class Slide in the incoming scene from the top.
- * @memberOf cocos.nodes
- * @extends cocos.nodes.TransitionSlideInL
- */
-var TransitionSlideInT = TransitionSlideInL.extend(/** @lends cocos.nodes.TransitionSlideInT# */{
-    sceneOrder: function () {
-        this.set('inSceneOnTop', false);
-    },
-
-    initScenes: function () {
-        var s = Director.get('sharedDirector').get('winSize');
-        this.get('inScene').set('position', geo.ccp(0, s.height));
-    },
-    
-    action: function () {
-        var s = Director.get('sharedDirector').get('winSize');
-        return actions.MoveBy.create({
-            position: geo.ccp(0, -s.height),
-            duration: this.get('duration')
-        });
-    }
-});
-
-/**
- * @class Slide in the incoming scene from the bottom.
- * @memberOf cocos.nodes
- * @extends cocos.nodes.TransitionSlideInL
- */
-var TransitionSlideInB = TransitionSlideInL.extend(/** @lends cocos.nodes.TransitionSlideInB# */{
-    sceneOrder: function () {
-        this.set('inSceneOnTop', true);
-    },
-
-    initScenes: function () {
-        var s = Director.get('sharedDirector').get('winSize');
-        this.get('inScene').set('position', geo.ccp(0, -s.height));
-    },
-    
-    action: function () {
-        var s = Director.get('sharedDirector').get('winSize');
-        return actions.MoveBy.create({
-            position: geo.ccp(0, s.height),
-            duration: this.get('duration')
-        });
-    }
-});
-
-exports.TransitionScene = TransitionScene;
-exports.TransitionRotoZoom = TransitionRotoZoom;
-exports.TransitionMoveInL = TransitionMoveInL;
-exports.TransitionMoveInR = TransitionMoveInR;
-exports.TransitionMoveInT = TransitionMoveInT;
-exports.TransitionMoveInB = TransitionMoveInB;
-exports.TransitionSlideInL = TransitionSlideInL;
-exports.TransitionSlideInR = TransitionSlideInR;
-exports.TransitionSlideInT = TransitionSlideInT;
-exports.TransitionSlideInB = TransitionSlideInB;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/nodes/Transition.js
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/libs/base64.js
 
 
 __jah__.resources["/libs/cocos2d/Preloader.js"] = {data: function (exports, require, module, __filename, __dirname) {
@@ -22144,8 +20613,2308 @@ exports.Preloader = Preloader;
 }, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/Preloader.js
 
 
-__jah__.resources["/libs/cocos2d/resources/progress-bar-empty.png"] = {data: __jah__.assetURL + "/libs/cocos2d/resources/progress-bar-empty.png", mimetype: "image/png", remote: true};
-__jah__.resources["/libs/cocos2d/resources/progress-bar-full.png"] = {data: __jah__.assetURL + "/libs/cocos2d/resources/progress-bar-full.png", mimetype: "image/png", remote: true};
+__jah__.resources["/libs/cocos2d/actions/ActionEase.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    ActionInterval = require('./ActionInterval').ActionInterval,
+    geo = require('geometry'),
+    ccp = geo.ccp;
+
+var ActionEase = ActionInterval.extend(/** @lends cocos.actions.ActionEase# */{
+    other: null,
+    
+    /**
+     * @class Base class for Easing actions
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ActionInterval
+     *
+     * @opt {cocos.actions.ActionInterval} action
+     */
+    init: function(opts) {
+        if (!opts.action) {
+            throw "Ease: action argument must be non-nil";
+        }
+        ActionEase.superclass.init.call(this, {duration: opts.action.duration});
+        
+        this.other = opts.action;
+    },
+    
+    startWithTarget: function(target) {
+        ActionEase.superclass.startWithTarget.call(this, target);
+        this.other.startWithTarget(this.target);
+    },
+    
+    stop: function() {
+        this.other.stop();
+        ActionEase.superclass.stop.call(this);
+    },
+    /*
+    update: function(t) {
+        this.other.update(t);
+    },
+    */
+    copy: function() {
+        return ActionEase.create({action: this.other.copy()});
+    },
+    
+    reverse: function() {
+        return ActionEase.create({action: this.other.reverse()});
+    }
+});
+
+var EaseRate = ActionEase.extend(/** @lends cocos.actions.EaseRate# */{
+    /**
+     * rate value for the actions 
+     * @type {Float} 
+     */
+    rate: 0,
+    
+    /**
+    * @class Base class for Easing actions with rate parameter
+    *
+    * @memberOf cocos.actions
+    * @constructs
+    * @extends cocos.actions.ActionEase
+    *
+    * @opt {cocos.actions.ActionInterval} action
+    * @opt {Float} rate
+    */
+    init: function(opts) {
+        EaseRate.superclass.init.call(this, opts);
+
+        this.rate = opts.rate;
+    },
+    
+    copy: function() {
+        return EaseRate.create({action: this.other.copy(), rate: this.rate});
+    },
+    
+    reverse: function() {
+        return EaseRate.create({action: this.other.reverse(), rate: 1 / this.rate});
+    }
+});
+
+/**
+ * @class EaseIn action with a rate
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.EaseRate
+ */
+var EaseIn = EaseRate.extend(/** @lends cocos.actions.EaseIn# */{
+    update: function(t) {
+        this.other.update(Math.pow(t, this.rate));
+    },
+    
+    copy: function() {
+        return EaseIn.create({action: this.other.copy(), rate: this.rate});
+    },
+    
+    reverse: function() {
+        return EaseIn.create({action: this.other.reverse(), rate: 1 / this.rate});
+    }
+});
+
+/**
+ * @class EaseOut action with a rate
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.EaseRate
+ */
+var EaseOut = EaseRate.extend(/** @lends cocos.actions.EaseOut# */{
+    update: function(t) {
+        this.other.update(Math.pow(t, 1/this.rate));
+    },
+    
+    copy: function() {
+        return EaseOut.create({action: this.other.copy(), rate: this.rate});
+    },
+    
+    reverse: function() {
+        return EaseOut.create({action: this.other.reverse(), rate: 1 / this.rate});
+    }
+});
+
+/**
+ * @class EaseInOut action with a rate
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.EaseRate
+ */
+var EaseInOut = EaseRate.extend(/** @lends cocos.actions.EaseInOut# */{
+    update: function(t) {
+        var sign = 1;
+        var r = Math.floor(this.rate);
+        if (r % 2 == 0) {
+            sign = -1;
+        }
+        t *= 2;
+        if (t < 1) {
+            this.other.update(0.5 * Math.pow(t, this.rate));
+        } else {
+            this.other.update(sign * 0.5 * (Math.pow(t-2, this.rate) + sign * 2));
+        }
+    },
+    
+    copy: function() {
+        return EaseInOut.create({action: this.other.copy(), rate: this.rate});
+    },
+    
+    reverse: function() {
+        return EaseInOut.create({action: this.other.reverse(), rate: this.rate});
+    }
+});
+
+/**
+ * @class EaseExponentialIn action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionEase
+ */
+var EaseExponentialIn = ActionEase.extend(/** @lends cocos.actions.EaseExponentialIn# */{
+    update: function(t) {
+        this.other.update((t == 0) ? 0 : (Math.pow(2, 10 * (t/1 - 1)) - 1 * 0.001));
+    },
+    
+    copy: function() {
+        return EaseExponentialIn.create({action: this.other.copy()});
+    },
+    
+    reverse: function() {
+        return exports.EaseExponentialOut.create({action: this.other.reverse()});
+    }
+});
+
+/**
+ * @class EaseExponentialOut action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionEase
+ */
+var EaseExponentialOut = ActionEase.extend(/** @lends cocos.actions.EaseExponentialOut# */{
+    update: function(t) {
+        this.other.update((t == 1) ? 1 : (-Math.pow(2, -10 * t/1) + 1));
+    },
+    
+    copy: function() {
+        return EaseExponentialOut.create({action: this.other.copy()});
+    },
+    
+    reverse: function() {
+        return exports.EaseExponentialIn.create({action: this.other.reverse()});
+    }
+});
+
+/**
+ * @class EaseExponentialInOut action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionEase
+ */
+var EaseExponentialInOut = ActionEase.extend(/** @lends cocos.actions.EaseExponentialInOut# */{
+    update: function(t) {
+        t /= 0.5;
+        if (t < 1) {
+            t = 0.5 * Math.pow(2, 10 * (t - 1));
+        } else {
+            t = 0.5 * (-Math.pow(2, -10 * (t - 1)) + 2);
+        }
+        this.other.update(t);
+    },
+    
+    copy: function() {
+        return EaseExponentialInOut.create({action: this.other.copy()});
+    },
+    
+    reverse: function() {
+        return EaseExponentialInOut.create({action: this.other.reverse()});
+    }
+});
+
+/**
+ * @class EaseSineIn action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionEase
+ */
+var EaseSineIn = ActionEase.extend(/** @lends cocos.actions.EaseSineIn# */{
+    update: function(t) {
+        this.other.update(-1 * Math.cos(t * Math.PI_2) + 1);
+    },
+    
+    copy: function() {
+        return EaseSineIn.create({action: this.other.copy()});
+    },
+    
+    reverse: function() {
+        return exports.EaseSineOut.create({action: this.other.reverse()});
+    }
+});
+
+/**
+ * @class EaseSineOut action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionEase
+ */
+var EaseSineOut = ActionEase.extend(/** @lends cocos.actions.EaseSineOut# */{
+    update: function(t) {
+        this.other.update(Math.sin(t * Math.PI_2));
+    },
+    
+    copy: function() {
+        return EaseSineOut.create({action: this.other.copy()});
+    },
+    
+    reverse: function() {
+        return exports.EaseSineIn.create({action: this.other.reverse()});
+    }
+});
+
+/**
+ * @class EaseSineInOut action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionEase
+ */
+var EaseSineInOut = ActionEase.extend(/** @lends cocos.actions.EaseSineInOut# */{
+    update: function(t) {
+        this.other.update(-0.5 * (Math.cos(t * Math.PI) - 1));
+    },
+    
+    copy: function() {
+        return EaseSineInOut.create({action: this.other.copy()});
+    },
+    
+    reverse: function() {
+        return EaseSineInOut.create({action: this.other.reverse()});
+    }
+});
+
+var EaseElastic = ActionEase.extend(/** @lends cocos.actions.EaseElastic# */{
+    /**
+     * period of the wave in radians. default is 0.3
+     * @type {Float}
+     */
+    period: 0.3,
+
+    /**
+     * @class Ease Elastic abstract class
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ActionEase
+     *
+     * @opt {cocos.actions.ActionInterval} action
+     * @opt {Float} period
+     */
+    init: function(opts) {
+        EaseElastic.superclass.init.call(this, {action: opts.action});
+
+        if (opts.period !== undefined) {
+            this.period = opts.period;
+        }
+    },
+
+    copy: function() {
+        return EaseElastic.create({action: this.other.copy(), period: this.period});
+    },
+
+    reverse: function() {
+        window.console.warn("EaseElastic reverse(): Override me");
+        return null;
+    }
+});
+
+/** 
+ * @class Ease Elastic In action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.EaseElastic
+ */
+var EaseElasticIn = EaseElastic.extend(/** @lends cocos.actions.EaseElasticIn# */{
+    update: function(t) {
+        var newT = 0;
+        if (t == 0 || t == 1) {
+            newT = t;
+        } else {
+            var s = this.period / 4;
+            t -= 1;
+            newT = -Math.pow(2, 10 * t) * Math.sin((t - s) * Math.PI*2 / this.period);
+        }
+        this.other.update(newT);
+    },
+    
+    // Wish we could use base class's copy
+    copy: function() {
+        return EaseElasticIn.create({action: this.other.copy(), period: this.period});
+    },
+    
+    reverse: function() {
+        return exports.EaseElasticOut.create({action: this.other.reverse(), period: this.period});
+    }
+});
+
+/** 
+ * @class Ease Elastic Out action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.EaseElastic
+ */
+var EaseElasticOut = EaseElastic.extend(/** @lends cocos.actions.EaseElasticOut# */{
+    update: function(t) {
+        var newT = 0;
+        if (t == 0 || t == 1) {
+            newT = t;
+        } else {
+            var s = this.period / 4;
+            newT = Math.pow(2, -10 * t) * Math.sin((t - s) * Math.PI*2 / this.period) + 1;
+        }
+        this.other.update(newT);
+    },
+    
+    copy: function() {
+        return EaseElasticOut.create({action: this.other.copy(), period: this.period});
+    },
+    
+    reverse: function() {
+        return exports.EaseElasticIn.create({action: this.other.reverse(), period: this.period});
+    }
+});
+
+/** 
+ * @class Ease Elastic In Out action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.EaseElastic
+ */
+var EaseElasticInOut = EaseElastic.extend(/** @lends cocos.actions.EaseElasticInOut# */{
+    update: function(t) {
+        var newT = 0;
+        if (t == 0 || t == 1) {
+            newT = t;
+        } else {
+            t *= 2;
+            if (this.period == 0) {
+                this.period = 0.3 * 1.5;
+            }
+            var s = this.period / 4;
+            
+            t -= 1;
+            if (t < 0) {
+                newT = -0.5 * Math.pow(2, 10 * t) * Math.sin((t - s) * Math.PI*2 / this.period);
+            } else {
+                newT = Math.pow(2, -10 * t) * Math.sin((t - s) * Math.PI*2 / this.period) * 0.5 + 1;
+            }
+        }
+        this.other.update(newT);
+    },
+    
+    copy: function() {
+        return EaseElasticInOut.create({action: this.other.copy(), period: this.period});
+    },
+    
+    reverse: function() {
+        return EaseElasticInOut.create({action: this.other.reverse(), period: this.period});
+    }
+});
+
+/** 
+ * @class Ease Bounce abstract class
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionEase
+ */
+var EaseBounce = ActionEase.extend(/** @lends cocos.actions.EaseBounce# */{
+    bounceTime: function(t) {
+        // Direct cut & paste from CCActionEase.m, obviously.
+        // Glad someone else figured out all this math...
+        if (t < 1 / 2.75) {
+            return 7.5625 * t * t;
+        }
+        else if (t < 2 / 2.75) {
+            t -= 1.5 / 2.75;
+            return 7.5625 * t * t + 0.75;
+        }
+        else if (t < 2.5 / 2.75) {
+            t -= 2.25 / 2.75;
+            return 7.5625 * t * t + 0.9375;
+        }
+
+        t -= 2.625 / 2.75;
+        return 7.5625 * t * t + 0.984375;
+    }
+});
+
+/** 
+ * @class Ease Bounce In action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.EaseBounce
+ */
+var EaseBounceIn = EaseBounce.extend(/** @lends cocos.actions.EaseBounceIn# */{
+    update: function(t) {
+        var newT = 1 - this.bounceTime(1-t);
+        this.other.update(newT);
+    },
+    
+    copy: function() {
+        return EaseBounceIn.create({action: this.other.copy()});
+    },
+    
+    reverse: function() {
+        return exports.EaseBounceOut.create({action: this.other.reverse()});
+    }
+});
+
+/** 
+ * @class Ease Bounce Out action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.EaseBounce
+ */
+var EaseBounceOut = EaseBounce.extend(/** @lends cocos.actions.EaseBounceOut# */{
+    update: function(t) {
+        var newT = this.bounceTime(t);
+        this.other.update(newT);
+    },
+    
+    copy: function() {
+        return EaseBounceOut.create({action: this.other.copy()});
+    },
+    
+    reverse: function() {
+        return exports.EaseBounceIn.create({action: this.other.reverse()});
+    }
+});
+
+/** 
+ * @class Ease Bounce In Out action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.EaseBounce
+ */
+var EaseBounceInOut = EaseBounce.extend(/** @lends cocos.actions.EaseBounceInOut# */{
+    update: function(t) {
+        var newT = 0;
+        if (t < 0.5) {
+            t *= 2;
+            newT = (1 - this.bounceTime(1 - t)) * 0.5;
+        } else {
+            newT = this.bounceTime(t * 2 - 1) * 0.5 + 0.5;
+        }
+        this.other.update(newT);
+    },
+    
+    copy: function() {
+        return EaseBounceInOut.create({action: this.other.copy()});
+    },
+    
+    reverse: function() {
+        return EaseBounceInOut.create({action: this.other.reverse()});
+    }
+});
+
+/** 
+ * @class Ease Back In action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionEase
+ */
+var EaseBackIn = ActionEase.extend(/** @lends cocos.actions.EaseBackIn# */{
+    update: function(t) {
+        var overshoot = 1.70158;
+        this.other.update(t * t * ((overshoot + 1) * t - overshoot));
+    },
+    
+    copy: function() {
+        return EaseBackIn.create({action: this.other.copy()});
+    },
+    
+    reverse: function() {
+        return exports.EaseBackOut.create({action: this.other.reverse()});
+    }
+});
+
+/** 
+ * @class Ease Back Out action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionEase
+ */
+var EaseBackOut = ActionEase.extend(/** @lends cocos.actions.EaseBackOut# */{
+    update: function(t) {
+        var overshoot = 1.70158;
+        t -= 1;
+        this.other.update(t * t * ((overshoot + 1) * t + overshoot) + 1);
+    },
+    
+    copy: function() {
+        return EaseBackOut.create({action: this.other.copy()});
+    },
+    
+    reverse: function() {
+        return exports.EaseBackIn.create({action: this.other.reverse()});
+    }
+});
+
+/** 
+ * @class Ease Back In Out action
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionEase
+ */
+var EaseBackInOut = ActionEase.extend(/** @lends cocos.actions.EaseBackInOut# */{
+    update: function(t) {
+        // Where do these constants come from?
+        var overshoot = 1.70158 * 1.525;
+        t *= 2;
+        if (t < 1) {
+            this.other.update((t * t * ((overshoot + 1) * t - overshoot)) / 2);
+        } else {
+            t -= 2;
+            this.other.update((t * t * ((overshoot + 1) * t + overshoot)) / 2 + 1);
+        }
+    },
+    
+    copy: function() {
+        return EaseBackInOut.create({action: this.other.copy()});
+    },
+    
+    reverse: function() {
+        return EaseBackInOut.create({action: this.other.reverse()});
+    }
+});
+
+exports.ActionEase = ActionEase;
+exports.EaseRate = EaseRate;
+exports.EaseIn = EaseIn;
+exports.EaseOut = EaseOut;
+exports.EaseInOut = EaseInOut;
+exports.EaseExponentialIn = EaseExponentialIn;
+exports.EaseExponentialOut = EaseExponentialOut;
+exports.EaseExponentialInOut = EaseExponentialInOut;
+exports.EaseSineIn = EaseSineIn;
+exports.EaseSineOut = EaseSineOut;
+exports.EaseSineInOut = EaseSineInOut;
+exports.EaseElastic = EaseElastic;
+exports.EaseElasticIn = EaseElasticIn;
+exports.EaseElasticOut = EaseElasticOut;
+exports.EaseElasticInOut = EaseElasticInOut;
+exports.EaseBounce = EaseBounce;
+exports.EaseBounceIn = EaseBounceIn;
+exports.EaseBounceOut = EaseBounceOut;
+exports.EaseBounceInOut = EaseBounceInOut;
+exports.EaseBackIn = EaseBackIn;
+exports.EaseBackOut = EaseBackOut;
+exports.EaseBackInOut = EaseBackInOut;
+
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/actions/ActionEase.js
+
+
+__jah__.resources["/libs/cocos2d/actions/ActionInterval.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    act = require('./Action'),
+    geo = require('geometry'),
+    ccp = geo.ccp;
+
+
+var ActionInterval = act.FiniteTimeAction.extend(/** @lends cocos.actions.ActionInterval# */{
+    /**
+     * Number of seconds that have elapsed
+     * @type Float
+     */
+    elapsed: 0.0,
+
+    _firstTick: true,
+
+    /**
+     * Base class actions that do have a finite time duration.
+     *
+     * Possible actions:
+     *
+     * - An action with a duration of 0 seconds
+     * - An action with a duration of 35.5 seconds Infinite time actions are valid
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.FiniteTimeAction
+     *
+     * @opt {Float} duration Number of seconds to run action for
+     */
+    init: function (opts) {
+        ActionInterval.superclass.init.call(this, opts);
+
+        var dur = opts.duration || 0;
+        if (dur === 0) {
+            dur = 0.0000001;
+        }
+
+        this.set('duration', dur);
+        this.set('elapsed', 0);
+        this._firstTick = true;
+    },
+
+    get_isDone: function () {
+        return (this.elapsed >= this.duration);
+    },
+
+    step: function (dt) {
+        if (this._firstTick) {
+            this._firstTick = false;
+            this.elapsed = 0;
+        } else {
+            this.elapsed += dt;
+        }
+
+        this.update(Math.min(1, this.elapsed / this.duration));
+    },
+
+    startWithTarget: function (target) {
+        ActionInterval.superclass.startWithTarget.call(this, target);
+
+        this.elapsed = 0.0;
+        this._firstTick = true;
+    },
+
+    copy: function() {
+        throw "copy() not implemented";
+    },
+    
+    reverse: function () {
+        throw "Reverse Action not implemented";
+    }
+});
+
+var DelayTime = ActionInterval.extend(/** @lends cocos.actions.DelayTime# */{
+    /**
+     * @class DelayTime Delays the action a certain amount of seconds
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ActionInterval
+     */
+    update: function (t) {
+        if (t === 1.0) {
+            this.stop();
+        }
+    },
+
+    copy: function () {
+        return DelayTime.create({duration: this.get('duration')});
+    },
+
+    reverse: function () {
+        return DelayTime.create({duration: this.get('duration')});
+    }
+});
+
+
+var ScaleTo = ActionInterval.extend(/** @lends cocos.actions.ScaleTo# */{
+    /**
+     * Current X Scale
+     * @type Float
+     */
+    scaleX: 1,
+
+    /**
+     * Current Y Scale
+     * @type Float
+     */
+    scaleY: 1,
+
+    /**
+     * Initial X Scale
+     * @type Float
+     */
+    startScaleX: 1,
+
+    /**
+     * Initial Y Scale
+     * @type Float
+     */
+    startScaleY: 1,
+
+    /**
+     * Final X Scale
+     * @type Float
+     */
+    endScaleX: 1,
+
+    /**
+     * Final Y Scale
+     * @type Float
+     */
+    endScaleY: 1,
+
+    /**
+     * Delta X Scale
+     * @type Float
+     * @private
+     */
+    deltaX: 0.0,
+
+    /**
+     * Delta Y Scale
+     * @type Float
+     * @private
+     */
+    deltaY: 0.0,
+
+    /**
+     * @class ScaleTo Scales a cocos.Node object to a zoom factor by modifying it's scale attribute.
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ActionInterval
+     *
+     * @opt {Float} duration Number of seconds to run action for
+     * @opt {Float} [scale] Size to scale Node to
+     * @opt {Float} [scaleX] Size to scale width of Node to
+     * @opt {Float} [scaleY] Size to scale height of Node to
+     */
+    init: function (opts) {
+        ScaleTo.superclass.init.call(this, opts);
+
+        if (opts.scale !== undefined) {
+            this.endScaleX = this.endScaleY = opts.scale;
+        } else {
+            this.endScaleX = opts.scaleX;
+            this.endScaleY = opts.scaleY;
+        }
+
+
+    },
+
+    startWithTarget: function (target) {
+        ScaleTo.superclass.startWithTarget.call(this, target);
+
+        this.startScaleX = this.target.get('scaleX');
+        this.startScaleY = this.target.get('scaleY');
+        this.deltaX = this.endScaleX - this.startScaleX;
+        this.deltaY = this.endScaleY - this.startScaleY;
+    },
+
+    update: function (t) {
+        if (!this.target) {
+            return;
+        }
+
+        this.target.set('scaleX', this.startScaleX + this.deltaX * t);
+        this.target.set('scaleY', this.startScaleY + this.deltaY * t);
+    },
+
+    copy: function () {
+        return ScaleTo.create({duration: this.get('duration'),
+                                 scaleX: this.get('endScaleX'),
+                                 scaleY: this.get('endScaleY')});
+    }
+});
+
+var ScaleBy = ScaleTo.extend(/** @lends cocos.actions.ScaleBy# */{
+    /**
+     * @class ScaleBy Scales a cocos.Node object to a zoom factor by modifying it's scale attribute.
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ScaleTo
+     *
+     * @opt {Float} duration Number of seconds to run action for
+     * @opt {Float} [scale] Size to scale Node by
+     * @opt {Float} [scaleX] Size to scale width of Node by
+     * @opt {Float} [scaleY] Size to scale height of Node by
+     */
+    init: function (opts) {
+        ScaleBy.superclass.init.call(this, opts);
+    },
+
+    startWithTarget: function (target) {
+        ScaleBy.superclass.startWithTarget.call(this, target);
+
+        this.deltaX = this.startScaleX * this.endScaleX - this.startScaleX;
+        this.deltaY = this.startScaleY * this.endScaleY - this.startScaleY;
+    },
+
+    reverse: function () {
+        return ScaleBy.create({duration: this.get('duration'), scaleX: 1 / this.endScaleX, scaleY: 1 / this.endScaleY});
+    }
+});
+
+
+var RotateTo = ActionInterval.extend(/** @lends cocos.actions.RotateTo# */{
+    /**
+     * Final angle
+     * @type Float
+     */
+    dstAngle: 0,
+
+    /**
+     * Initial angle
+     * @type Float
+     */
+    startAngle: 0,
+
+    /**
+     * Angle delta
+     * @type Float
+     */
+    diffAngle: 0,
+
+    /**
+     * @class RotateTo Rotates a cocos.Node object to a certain angle by modifying its rotation
+     * attribute. The direction will be decided by the shortest angle.
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ActionInterval
+     *
+     * @opt {Float} duration Number of seconds to run action for
+     * @opt {Float} angle Angle in degrees to rotate to
+     */
+    init: function (opts) {
+        RotateTo.superclass.init.call(this, opts);
+
+        this.dstAngle = opts.angle;
+    },
+
+    startWithTarget: function (target) {
+        RotateTo.superclass.startWithTarget.call(this, target);
+
+        this.startAngle = target.get('rotation');
+
+        if (this.startAngle > 0) {
+            this.startAngle = (this.startAngle % 360);
+        } else {
+            this.startAngle = (this.startAngle % -360);
+        }
+
+        this.diffAngle = this.dstAngle - this.startAngle;
+        if (this.diffAngle > 180) {
+            this.diffAngle -= 360;
+        } else if (this.diffAngle < -180) {
+            this.diffAngle += 360;
+        }
+    },
+
+    update: function (t) {
+        this.target.set('rotation', this.startAngle + this.diffAngle * t);
+    },
+
+    copy: function () {
+        return RotateTo.create({duration: this.get('duration'), angle: this.get('dstAngle')});
+    }
+});
+
+var RotateBy = RotateTo.extend(/** @lends cocos.actions.RotateBy# */{
+    /**
+     * Number of degrees to rotate by
+     * @type Float
+     */
+    angle: 0,
+
+    /**
+     * @class RotateBy Rotates a cocos.Node object to a certain angle by modifying its rotation
+     * attribute. The direction will be decided by the shortest angle.
+     *
+     * @memberOf cocos.action
+     * @constructs
+     * @extends cocos.actions.RotateTo
+     *
+     * @opt {Float} duration Number of seconds to run action for
+     * @opt {Float} angle Angle in degrees to rotate by
+     */
+    init: function (opts) {
+        RotateBy.superclass.init.call(this, opts);
+
+        this.angle = opts.angle;
+    },
+
+    startWithTarget: function (target) {
+        RotateBy.superclass.startWithTarget.call(this, target);
+
+        this.startAngle = this.target.get('rotation');
+    },
+
+    update: function (t) {
+        this.target.set('rotation', this.startAngle + this.angle * t);
+    },
+
+    copy: function () {
+        return RotateBy.create({duration: this.get('duration'), angle: this.angle});
+    },
+    
+    reverse: function () {
+        return RotateBy.create({duration: this.get('duration'), angle: -this.angle});
+    }
+});
+
+var MoveTo = ActionInterval.extend(/** @lends cocos.actions.MoveTo# */{
+    delta: null,
+    startPosition: null,
+    endPosition: null,
+
+    /**
+     * @class MoveTo Animates moving a cocos.nodes.Node object to a another point.
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ActionInterval
+     *
+     * @opt {Float} duration Number of seconds to run action for
+     * @opt {geometry.Point} position Destination position
+     */
+    init: function (opts) {
+        MoveTo.superclass.init.call(this, opts);
+
+        this.set('endPosition', util.copy(opts.position));
+    },
+
+    startWithTarget: function (target) {
+        MoveTo.superclass.startWithTarget.call(this, target);
+
+        this.set('startPosition', util.copy(target.get('position')));
+        this.set('delta', geo.ccpSub(this.get('endPosition'), this.get('startPosition')));
+    },
+
+    update: function (t) {
+        var startPosition = this.get('startPosition'),
+            delta = this.get('delta');
+        this.target.set('position', ccp(startPosition.x + delta.x * t, startPosition.y + delta.y * t));
+    },
+    
+    copy: function() {
+        return MoveTo.create({duration: this.get('duration'), position: this.get('endPosition')});
+    }
+});
+
+var MoveBy = MoveTo.extend(/** @lends cocos.actions.MoveBy# */{
+    /**
+     * @class MoveBy Animates moving a cocos.node.Node object by a given number of pixels
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.MoveTo
+     *
+     * @opt {Float} duration Number of seconds to run action for
+     * @opt {geometry.Point} position Number of pixels to move by
+     */
+    init: function (opts) {
+        MoveBy.superclass.init.call(this, opts);
+
+        this.set('delta', util.copy(opts.position));
+    },
+
+    startWithTarget: function (target) {
+        var dTmp = this.get('delta');
+        MoveBy.superclass.startWithTarget.call(this, target);
+        this.set('delta', dTmp);
+    },
+    
+    copy: function() {
+         return MoveBy.create({duration: this.get('duration'), position: this.get('delta')});
+    },
+    
+    reverse: function() {
+        var delta = this.get('delta');
+        return MoveBy.create({duration: this.get('duration'), position: geo.ccp(-delta.x, -delta.y)});
+    }
+});
+
+var JumpBy = ActionInterval.extend(/** @lends cocos.actions.JumpBy# */{
+    /**
+     * Number of pixels to jump by
+     * @type geometry.Point
+     */
+    delta: null,
+    
+    /**
+     * Height of jump
+     * @type Float
+     */
+    height: 0,
+    
+    /**
+     * Number of times to jump
+     * @type Integer
+     */
+    jumps: 0,
+    
+    /**
+     * Starting point
+     * @type geometry.Point
+     */
+    startPosition: null,
+    
+    /**
+     * @class JumpBy Moves a CCNode object simulating a parabolic jump movement by modifying it's position attribute.
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ActionInterval
+     *
+     * @opt {Float} duration Number of seconds to run action for
+     * @opt {geometry.Point} startPosition Point at which jump starts
+     * @opt {geometry.Point} delta Number of pixels to jump by
+     * @opt {Float} height Height of jump
+     * @opt {Int} jumps Number of times to repeat
+     */
+    init: function(opts) {
+        JumpBy.superclass.init.call(this, opts);
+        
+        this.delta  = util.copy(opts.delta);
+        this.height = opts.height;
+        this.jumps  = opts.jumps;
+    },
+    
+    copy: function() {
+        return JumpBy.create({duration: this.duration, 
+                                 delta: this.delta,
+                                height: this.height,
+                                 jumps: this.jumps});
+    },
+    
+    startWithTarget: function(target) {
+        JumpBy.superclass.startWithTarget.call(this, target);
+        this.set('startPosition', target.get('position'));
+    },
+    
+    update: function(t) {
+        // parabolic jump
+        var frac = (t * this.jumps) % 1.0;
+        var y = this.height * 4 * frac * (1 - frac);
+        y += this.delta.y * t;
+        var x = this.delta.x * t;
+        this.target.set('position', geo.ccp(this.startPosition.x + x, this.startPosition.y + y));
+    },
+    
+    reverse: function() {
+        return JumpBy.create({duration: this.duration,
+                                 delta: geo.ccp(-this.delta.x, -this.delta.y),
+                                height: this.height,
+                                 jumps: this.jumps});
+    }
+});
+
+/**
+ * @class Moves a Node to a parabolic position simulating a jump movement by modifying its position attribute.
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.JumpBy
+ */
+var JumpTo = JumpBy.extend(/** @lends cocos.actions.JumpTo# */{
+    startWithTarget: function(target) {
+        JumpTo.superclass.startWithTarget.call(this, target);
+        this.delta = geo.ccp(this.delta.x - this.startPosition.x, this.delta.y - this.startPosition.y);
+    }
+});
+
+var BezierBy = ActionInterval.extend(/** @lends cocos.actions.BezierBy# */{
+    /**
+     * @type {geometry.BezierConfig}
+     */
+    config: null,
+    
+    startPosition: null,
+    
+    /**
+     * @class An action that moves the target with a cubic Bezier curve by a certain distance.
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ActionInterval
+     *
+     * @opt {geometry.BezierConfig} bezier Bezier control points object
+     * @opt {Float} duration
+     */
+    init: function(opts) {
+        BezierBy.superclass.init.call(this, opts);
+        
+        this.config = util.copy(opts.bezier);
+    },
+    
+    startWithTarget: function(target) {
+        BezierBy.superclass.startWithTarget.call(this, target);
+        this.set('startPosition', this.target.get('position'));
+    },
+    
+    update: function(t) {
+        var c = this.get('config');
+        var xa = 0,
+            xb = c.controlPoint1.x,
+            xc = c.controlPoint2.x,
+            xd = c.endPosition.x,
+            ya = 0,
+            yb = c.controlPoint1.y,
+            yc = c.controlPoint2.y,
+            yd = c.endPosition.y;
+        
+        var x = BezierBy.bezierat(xa, xb, xc, xd, t);
+        var y = BezierBy.bezierat(ya, yb, yc, yd, t);
+        
+        this.target.set('position', geo.ccpAdd(this.get('startPosition'), geo.ccp(x, y)));
+    },
+    
+    copy: function() {
+        return BezierBy.create({bezier: this.get('config'), duration: this.get('duration')});
+    },
+    
+    reverse: function() {
+        var c = this.get('config'),
+            bc = new geo.BezierConfig();
+            
+        bc.endPosition = geo.ccpNeg(c.endPosition);
+        bc.controlPoint1 = geo.ccpAdd(c.controlPoint2, geo.ccpNeg(c.endPosition));
+        bc.controlPoint2 = geo.ccpAdd(c.controlPoint1, geo.ccpNeg(c.endPosition));
+        
+        return BezierBy.create({bezier: bc, duration: this.get('duration')});
+    }
+});
+
+util.extend(BezierBy, /** @lends cocos.actions.BezierBy */{
+    /**
+     * Bezier cubic formula
+     * ((1 - t) + t)3 = 1 
+     */
+    bezierat: function(a, b, c, d, t) {
+       return Math.pow(1-t, 3) * a + 
+            3 * t * Math.pow(1-t, 2) * b +
+            3 * Math.pow(t, 2) * (1 - t) * c +
+            Math.pow(t, 3) * d;
+    }
+});
+
+/**
+ * @class An action that moves the target with a cubic Bezier curve to a destination point.
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.BezierBy
+ */
+var BezierTo = BezierBy.extend(/** @lends cocos.actions.BezierTo# */{
+    startWithTarget: function(target) {
+        BezierTo.superclass.startWithTarget.call(this, target);
+        
+        var c = this.get('config');
+        c.controlPoint1 = geo.ccpSub(c.controlPoint1, this.get('startPosition'));
+        c.controlPoint2 = geo.ccpSub(c.controlPoint2, this.get('startPosition'));
+        c.endPosition = geo.ccpSub(c.endPosition, this.get('startPosition'));
+    }
+});
+
+var Blink = ActionInterval.extend(/** @lends cocos.actions.Blink# */{
+    /**
+     * @type {Integer}
+     */
+    times: 1,
+    
+    /**
+     * @class Blinks a Node object by modifying it's visible attribute
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ActionInterval
+     *
+     * @opts {Integer} blinks Number of times to blink
+     * @opts {Float} duration
+     */
+    init: function(opts) {
+        Blink.superclass.init.call(this, opts);
+        this.times = opts.blinks;
+    },
+    
+    update: function(t) {
+        if (! this.get_isDone()) {
+            var slice = 1 / this.times;
+            var m = t % slice;
+            this.target.set('visible', (m > slice/2));
+        }
+    },
+    
+    copy: function() {
+        return Blink.create({duration: this.get('duration'), blinks: this.get('times')});
+    },
+    
+    reverse: function() {
+        return this.copy();
+    }
+});
+
+/**
+ * @class Fades out a cocos.nodes.Node to zero opacity
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionInterval
+ */     
+var FadeOut = ActionInterval.extend(/** @lends cocos.actions.FadeOut# */{
+    update: function (t) {
+        var target = this.get('target');
+        if (!target) return;
+        target.set('opacity', 255 - (255 * t));
+    },
+
+    copy: function () {
+        return FadeOut.create({duration: this.get('duration')});
+    },
+    
+    reverse: function () {
+        return exports.FadeIn.create({duration: this.get('duration')});
+    }
+});
+
+
+/**
+ * @class Fades in a cocos.nodes.Node to 100% opacity
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionInterval
+ */
+var FadeIn = ActionInterval.extend(/** @lends cocos.actions.FadeIn# */{
+    update: function (t) {
+        var target = this.get('target');
+        if (!target) return;
+        target.set('opacity', t * 255);
+    },
+
+    copy: function () {
+        return FadeIn.create({duration: this.get('duration')});
+    },
+    
+    reverse: function () {
+        return exports.FadeOut.create({duration: this.get('duration')});
+    }
+});
+
+var FadeTo = ActionInterval.extend(/** @lends cocos.actions.FadeTo# */{
+    /**
+     * The final opacity
+     * @type Float
+     */
+    toOpacity: null,
+
+    /**
+     * The initial opacity
+     * @type Float
+     */
+    fromOpacity: null,
+
+    /**
+     * @class Fades a cocos.nodes.Node to a given opacity
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ActionInterval
+     */
+    init: function (opts) {
+        FadeTo.superclass.init.call(this, opts);
+        this.set('toOpacity', opts.toOpacity);
+    },
+
+    startWithTarget: function (target) {
+        FadeTo.superclass.startWithTarget.call(this, target);
+        this.set('fromOpacity', this.target.get('opacity'));
+    },
+
+    update: function (t) {
+        var target = this.get('target');
+        if (!target) return;
+
+        target.set('opacity', this.fromOpacity + ( this.toOpacity - this.fromOpacity ) * t);
+    },
+    
+    copy: function() {
+        return FadeTo.create({duration: this.get('duration'), toOpacity: this.get('toOpacity')});
+    }
+});
+
+var Sequence = ActionInterval.extend(/** @lends cocos.actions.Sequence# */{
+    /**
+     * Array of actions to run
+     * @type cocos.nodes.Node[]
+     */
+    actions: null,
+
+    split: 0,
+    last: 0,
+    
+    /**
+     * @class Runs a pair of actions sequentially, one after another
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ActionInterval
+     *
+     * @opt {cocos.actions.FiniteTimeAction} one 1st action to run
+     * @opt {cocos.actions.FiniteTimeAction} two 2nd action to run
+     */
+    init: function (opts) {
+        if (!opts.one) {
+            throw "Sequence argument one must be non-nil";
+        }
+        if (!opts.two) {
+            throw "Sequence argument two must be non-nil";
+        }
+        this.actions = [];
+        
+        var d = opts.one.get('duration') + opts.two.get('duration');
+        
+        Sequence.superclass.init.call(this, {duration: d});
+        
+        this.actions[0] = opts.one;
+        this.actions[1] = opts.two;
+    },
+    
+    startWithTarget: function (target) {
+        Sequence.superclass.startWithTarget.call(this, target);
+        this.split = this.actions[0].get('duration') / this.get('duration');
+        this.last = -1;
+    },
+
+    stop: function () {
+        this.actions[0].stop();
+        this.actions[1].stop();
+        Sequence.superclass.stop.call(this);
+    },
+
+    update: function (t) {
+        // This is confusing but will hopefully work better in conjunction
+        // with modifer actions like Repeat & Spawn...
+        var found = 0;
+        var new_t = 0;
+        
+        if (t >= this.split) {
+            found = 1;
+            if (this.split == 1) {
+                new_t = 1;
+            } else {
+                new_t = (t - this.split) / (1 - this.split);
+            }
+        } else {
+            found = 0;
+            if (this.split != 0) {
+                new_t = t / this.split;
+            } else {
+                new_t = 1;
+            }
+        }
+        if (this.last == -1 && found == 1) {
+            this.actions[0].startWithTarget(this.target);
+            this.actions[0].update(1);
+            this.actions[0].stop();
+        }
+        if (this.last != found) {
+            if (this.last != -1) {
+                this.actions[this.last].update(1);
+                this.actions[this.last].stop();
+            }
+            this.actions[found].startWithTarget(this.target);
+        }
+        this.actions[found].update(new_t);
+        this.last = found;
+    },
+
+    copy: function () {
+        // Constructor will copy actions 
+        return Sequence.create({actions: this.get('actions')});
+    },
+
+    reverse: function() {
+        return Sequence.create({actions: [this.actions[1].reverse(), this.actions[0].reverse()]});
+    }
+});
+
+util.extend(Sequence, /** @lends cocos.actions.Sequence */{
+    /** 
+     * Override BObject.create in order to implement recursive construction
+     * of actions array
+     */
+    create: function() {
+        // Don't copy actions array, copy the actions
+        var actions = arguments[0].actions;
+        var prev = actions[0].copy();
+        
+        // Recursively create Sequence with pair of actions
+        for (var i=1; i<actions.length; i++) {
+            var now = actions[i].copy();
+            if (now) {
+                prev = new this({one: prev, two: now});;
+            } else {
+                break;
+            }
+        }
+        return prev;
+    }
+});
+
+var Repeat = ActionInterval.extend(/** @lends cocos.actions.Repeat# */{
+    times: 1,
+    total: 0,
+    other: null,
+    
+    /**
+     * @class Repeats an action a number of times.
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ActionInterval
+     *
+     * @opt {cocos.actions.FiniteTimeAction} action Action to repeat
+     * @opt {Number} times Number of times to repeat
+     */
+     init: function(opts) {
+         var d = opts.action.get('duration') * opts.times;
+
+         Repeat.superclass.init.call(this, {duration: d});
+         
+         this.times = opts.times;
+         this.other = opts.action.copy();
+         this.total = 0;
+     },
+     
+     startWithTarget: function(target) {
+         this.total = 0;
+         Repeat.superclass.startWithTarget.call(this, target);
+         this.other.startWithTarget(target);
+     },
+     
+     stop: function() {
+         this.other.stop();
+         Repeat.superclass.stop.call(this);
+     },
+     
+     update: function(dt) {
+         var t = dt * this.times;
+         
+         if (t > (this.total+1)) {
+             this.other.update(1);
+             this.total += 1;
+             this.other.stop();
+             this.other.startWithTarget(this.target);
+             
+             // If repeat is over
+             if (this.total == this.times) {
+                 // set it in the original position
+                 this.other.update(0);
+             } else {
+                 // otherwise start next repeat
+                 this.other.update(t - this.total);
+             }
+         } else {
+             var r = t % 1.0;
+             
+             // fix last repeat position otherwise it could be 0
+             if (dt == 1) {
+                 r = 1;
+                 this.total += 1;
+             }
+             this.other.update(Math.min(r, 1));
+         }
+     },
+     
+     get_isDone: function() {
+         return this.total == this.times;
+     },
+     
+     copy: function() {
+         // Constructor copies action
+         return Repeat.create({action: this.other, times: this.times});
+     },
+     
+     reverse: function() {
+         return Repeat.create({action: this.other.reverse(), times: this.times});
+     }
+});
+
+var Spawn = ActionInterval.extend(/** @lends cocos.actions.Spawn# */{
+    one: null,
+    two: null,
+
+    /**
+     * @class Executes multiple actions simultaneously
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ActionInterval
+     *
+     * @opt {cocos.actions.FiniteTimeAction} one: first action to spawn
+     * @opt {cocos.actions.FiniteTimeAction} two: second action to spawn
+     */
+    init: function (opts) {
+        var action1 = opts.one, 
+            action2 = opts.two;
+            
+        if (!action1 || !action2) {
+            throw "cocos.actions.Spawn: required actions missing";
+        }
+        var d1 = action1.get('duration'), 
+            d2 = action2.get('duration');
+        
+        Spawn.superclass.init.call(this, {duration: Math.max(d1, d2)});
+        
+        this.set('one', action1);
+        this.set('two', action2);
+        
+        if (d1 > d2) {
+            this.set('two', Sequence.create({actions: [
+                action2, 
+                DelayTime.create({duration: d1-d2})
+            ]}));
+        } else if (d1 < d2) {
+            this.set('one', Sequence.create({actions: [
+                action1,
+                DelayTime.create({duration: d2-d1})
+            ]}));
+        }
+    },
+    
+    startWithTarget: function (target) {
+        Spawn.superclass.startWithTarget.call(this, target);
+        this.get('one').startWithTarget(this.target);
+        this.get('two').startWithTarget(this.target);
+    },
+    
+    stop: function () {
+        this.get('one').stop();
+        this.get('two').stop();
+        Spawn.superclass.stop.call(this);
+    },
+    
+    step: function (dt) {
+        if (this._firstTick) {
+            this._firstTick = false;
+            this.elapsed = 0;
+        } else {
+            this.elapsed += dt;
+        }
+        this.get('one').step(dt);
+        this.get('two').step(dt);
+    },
+    
+    update: function (t) {
+        this.get('one').update(t);
+        this.get('two').update(t);
+    },
+    
+    copy: function () {
+        return Spawn.create({one: this.get('one').copy(), two: this.get('two').copy()});
+    },
+    
+    reverse: function () {
+        return Spawn.create({one: this.get('one').reverse(), two: this.get('two').reverse()});
+    }
+});
+
+util.extend(Spawn, /** @lends cocos.actions.Spawn */{
+    /**
+     * Helper class function to create Spawn object from array of actions
+     *
+     * @opt {Array} actions: list of actions to run simultaneously
+     */
+    initWithActions: function (opts) {
+        var now, prev = opts.actions.shift();
+        while (opts.actions.length > 0) {
+            now = opts.actions.shift();
+            if (now) {
+                prev = this.create({one: prev, two: now});
+            } else {
+                break;
+            }
+        }
+        return prev;
+    }
+});
+
+var Animate = ActionInterval.extend(/** @lends cocos.actions.Animate# */{
+    animation: null,
+    restoreOriginalFrame: true,
+    origFrame: null,
+
+
+    /**
+     * @class Animates a sprite given the name of an Animation
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.ActionInterval
+     *
+     * @opt {Float} duration Number of seconds to run action for
+     * @opt {cocos.Animation} animation Animation to run
+     * @opt {Boolean} [restoreOriginalFrame=true] Return to first frame when finished
+     */
+    init: function (opts) {
+        this.animation = opts.animation;
+        this.restoreOriginalFrame = opts.restoreOriginalFrame !== false;
+        opts.duration = this.animation.frames.length * this.animation.delay;
+
+        Animate.superclass.init.call(this, opts);
+    },
+
+    startWithTarget: function (target) {
+        Animate.superclass.startWithTarget.call(this, target);
+
+        if (this.restoreOriginalFrame) {
+            this.set('origFrame', this.target.get('displayedFrame'));
+        }
+    },
+
+    stop: function () {
+        if (this.target && this.restoreOriginalFrame) {
+            var sprite = this.target;
+            sprite.set('displayFrame', this.origFrame);
+        }
+
+        Animate.superclass.stop.call(this);
+    },
+
+    update: function (t) {
+        var frames = this.animation.get('frames'),
+            numberOfFrames = frames.length,
+            idx = Math.floor(t * numberOfFrames);
+
+        if (idx >= numberOfFrames) {
+            idx = numberOfFrames - 1;
+        }
+
+        var sprite = this.target;
+        if (!sprite.isFrameDisplayed(frames[idx])) {
+            sprite.set('displayFrame', frames[idx]);
+        }
+    },
+
+    copy: function () {
+        return Animate.create({animation: this.animation, restoreOriginalFrame: this.restoreOriginalFrame});
+    }
+
+});
+
+exports.ActionInterval = ActionInterval;
+exports.DelayTime = DelayTime;
+exports.ScaleTo = ScaleTo;
+exports.ScaleBy = ScaleBy;
+exports.RotateTo = RotateTo;
+exports.RotateBy = RotateBy;
+exports.MoveTo = MoveTo;
+exports.MoveBy = MoveBy;
+exports.JumpBy = JumpBy;
+exports.JumpTo = JumpTo;
+exports.BezierBy = BezierBy;
+exports.BezierTo = BezierTo;
+exports.Blink = Blink;
+exports.FadeIn = FadeIn;
+exports.FadeOut = FadeOut;
+exports.FadeTo = FadeTo;
+exports.Spawn = Spawn;
+exports.Sequence = Sequence;
+exports.Repeat = Repeat;
+exports.Animate = Animate;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/actions/ActionInterval.js
+
+
+__jah__.resources["/libs/cocos2d/actions/index.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    path = require('path');
+
+var modules = 'Action ActionInterval ActionInstant ActionEase'.split(' ');
+
+/**
+ * @memberOf cocos
+ * @namespace Actions used to animate or change a Node
+ */
+var actions = {};
+
+util.each(modules, function (mod, i) {
+    util.extend(actions, require('./' + mod));
+});
+
+module.exports = actions;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/actions/index.js
+
+
+__jah__.resources["/libs/cocos2d/actions/Action.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    console = require('system').console,
+    geo = require('geometry'),
+    ccp = geo.ccp;
+
+/** 
+ * @memberOf cocos.actions
+ * @class Base class for Actions
+ * @extends BObject
+ * @constructor
+ */
+var Action = BObject.extend(/** @lends cocos.actions.Action# */{
+    /**
+     * The Node the action is being performed on
+     * @type cocos.nodes.Node
+     */
+    target: null,
+    originalTarget: null,
+    
+    /**
+     * Unique tag to identify the action
+     * @type *
+     */
+    tag: null,
+    
+    /**
+     * Called every frame with it's delta time.
+     *
+     * @param {Float} dt The delta time
+     */
+    step: function (dt) {
+        window.console.warn("Action.step() Override me");
+    },
+
+    /**
+     * Called once per frame.
+     *
+     * @param {Float} time How much of the animation has played. 0.0 = just started, 1.0 just finished.
+     */
+    update: function (time) {
+        window.console.warn("Action.update() Override me");
+    },
+
+    /**
+     * Called before the action start. It will also set the target.
+     *
+     * @param {cocos.nodes.Node} target The Node to run the action on
+     */
+    startWithTarget: function (target) {
+        this.target = this.originalTarget = target;
+    },
+
+    /**
+     * Called after the action has finished. It will set the 'target' to nil.
+     * <strong>Important</strong>: You should never call cocos.actions.Action#stop manually.
+     * Instead, use cocos.nodes.Node#stopAction(action)
+     */
+    stop: function () {
+        this.target = null;
+    },
+
+    /**
+     * @getter isDone
+     * @type {Boolean} 
+     */
+    get_isDone: function (key) {
+        return true;
+    },
+
+
+    /**
+     * Returns a copy of this Action but in reverse
+     *
+     * @returns {cocos.actions.Action} A new Action in reverse
+     */
+    reverse: function () {
+    }
+});
+
+var RepeatForever = Action.extend(/** @lends cocos.actions.RepeatForever# */{
+    other: null,
+
+    /**
+     * @memberOf cocos.actions
+     * @class Repeats an action forever. To repeat the an action for a limited
+     * number of times use the cocos.Repeat action.
+     * @extends cocos.actions.Action
+     * @param {cocos.actions.Action} action An action to repeat forever
+     * @constructs
+     */
+    init: function (action) {
+        RepeatForever.superclass.init(this, action);
+
+        this.other = action;
+    },
+
+    startWithTarget: function (target) {
+        RepeatForever.superclass.startWithTarget.call(this, target);
+
+        this.other.startWithTarget(this.target);
+    },
+
+    step: function (dt) {
+        this.other.step(dt);
+        if (this.other.get('isDone')) {
+            var diff = dt - this.other.get('duration') - this.other.get('elapsed');
+            this.other.startWithTarget(this.target);
+
+            this.other.step(diff);
+        }
+    },
+
+    get_isDone: function () {
+        return false;
+    },
+
+    reverse: function () {
+        return RepeatForever.create(this.other.reverse());
+    },
+
+    copy: function () {
+        return RepeatForever.create(this.other.copy());
+    }
+});
+
+var FiniteTimeAction = Action.extend(/** @lends cocos.actions.FiniteTimeAction# */{
+    /**
+     * Number of seconds to run the Action for
+     * @type Float
+     */
+    duration: 2,
+
+    /** 
+     * Repeats an action a number of times. To repeat an action forever use the
+     * cocos.RepeatForever action.
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.Action
+     */
+    init: function () {
+        FiniteTimeAction.superclass.init.call(this);
+    },
+
+    /** @ignore */
+    reverse: function () {
+        console.log('FiniteTimeAction.reverse() Override me');
+    }
+});
+
+var Speed = Action.extend(/** @lends cocos.actions.Speed# */{
+    other: null,
+    
+    /** 
+     * speed of the inner function
+     * @type Float
+     */
+    speed: 1.0,
+    
+    /** 
+     * Changes the speed of an action, making it take longer (speed>1)
+     * or less (speed<1) time.
+     * Useful to simulate 'slow motion' or 'fast forward' effect.
+     * @warning This action can't be Sequenceable because it is not an IntervalAction
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.Action
+     */
+    init: function(opts) {
+        Speed.superclass.init.call(this, opts);
+        
+        this.other = opts.action;
+        this.speed = opts.speed;
+    },
+    
+    startWithTarget: function(target) {
+        Speed.superclass.startWithTarget.call(this, target);
+        this.other.startWithTarget(this.target);
+    },
+    
+    setSpeed: function(speed) {
+        this.speed = speed;
+    },
+    
+    stop: function() {
+        this.other.stop();
+        Speed.superclass.stop.call(this);
+    },
+    
+    step: function(dt) {
+        this.other.step(dt * this.speed);
+    },
+    
+    get_isDone: function() {
+        return this.other.get_isDone();
+    },
+    
+    copy: function() {
+        return Speed.create({action: this.other.copy(), speed: this.speed});
+    },
+    
+    reverse: function() {
+        return Speed.create({action: this.other.reverse(), speed: this.speed});
+    }
+});
+
+var Follow = Action.extend(/** @lends cocos.actions.Follow# */{
+    /**
+     * node to follow
+     */
+    followedNode: null,
+    
+    /**
+     * whether camera should be limited to certain area
+     * @type {Boolean}
+     */
+    boundarySet: false,
+    
+    /**
+     * if screensize is bigger than the boundary - update not needed 
+     * @type {Boolean}
+     */
+    boundaryFullyCovered: false,
+    
+    /**
+     * fast access to the screen dimensions 
+     * @type {geometry.Point}
+     */
+    halfScreenSize: null,
+    fullScreenSize: null,
+    
+    /**
+     * world boundaries
+     * @type {Float}
+     */
+    leftBoundary: 0,
+    rightBoundary: 0,
+    topBoundary: 0,
+    bottomBoundary: 0,
+    
+    /** 
+     * @class Follow an action that "follows" a node.
+     *
+     * Eg:
+     * layer.runAction(cocos.actions.Follow.create({target: hero}))
+     *
+     * @memberOf cocos.actions
+     * @constructs
+     * @extends cocos.actions.Action
+     *
+     * @opt {cocos.nodes.Node} target
+     * @opt {geometry.Rect} worldBoundary
+     */
+    init: function(opts) {
+        Follow.superclass.init.call(this, opts);
+        
+        this.followedNode = opts.target;
+        
+        var s = require('../Director').Director.get('sharedDirector').get('winSize');
+        this.fullScreenSize = geo.ccp(s.width, s.height);
+        this.halfScreenSize = geo.ccpMult(this.fullScreenSize, geo.ccp(0.5, 0.5));
+        
+        if (opts.worldBoundary !== undefined) {
+            this.boundarySet = true;
+            this.leftBoundary = -((opts.worldBoundary.origin.x + opts.worldBoundary.size.width) - this.fullScreenSize.x);
+            this.rightBoundary = -opts.worldBoundary.origin.x;
+            this.topBoundary = -opts.worldBoundary.origin.y;
+            this.bottomBoundary = -((opts.worldBoundary.origin.y+opts.worldBoundary.size.height) - this.fullScreenSize.y);
+            
+            if (this.rightBoundary < this.leftBoundary) {
+                // screen width is larger than world's boundary width
+                //set both in the middle of the world
+                this.rightBoundary = this.leftBoundary = (this.leftBoundary + this.rightBoundary) / 2;
+            }
+            if (this.topBoundary < this.bottomBoundary)
+            {
+                // screen width is larger than world's boundary width
+                //set both in the middle of the world
+                this.topBoundary = this.bottomBoundary = (this.topBoundary + this.bottomBoundary) / 2;
+            }
+            if ((this.topBoundary == this.bottomBoundary) && (this.leftBoundary == this.rightBoundary)) {
+                this.boundaryFullyCovered = true;
+            }
+        }
+    },
+    
+    step: function(dt) {
+        if (this.boundarySet) {
+            // whole map fits inside a single screen, no need to modify the position - unless map boundaries are increased
+            if (this.boundaryFullyCovered) {
+                return;
+            }
+            var tempPos = geo.ccpSub(this.halfScreenSize, this.followedNode.get('position'));
+            this.target.set('position', ccp(
+                Math.min(Math.max(tempPos.x, this.leftBoundary), this.rightBoundary),
+                Math.min(Math.max(tempPos.y, this.bottomBoundary), this.topBoundary))
+            );
+        } else {
+            this.target.set('position', geo.ccpSub(this.halfScreenSize, this.followedNode.get('position')));
+        }
+    },
+    
+    get_isDone: function() {
+        return !this.followedNode.get('isRunning');
+    }
+});
+
+
+exports.Action = Action;
+exports.RepeatForever = RepeatForever;
+exports.FiniteTimeAction = FiniteTimeAction;
+exports.Speed = Speed;
+exports.Follow = Follow;
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/actions/Action.js
+
+
+__jah__.resources["/libs/cocos2d/actions/ActionInstant.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/*globals module exports resource require BObject BArray*/
+/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
+"use strict";
+
+var util = require('util'),
+    act = require('./Action'),
+    ccp = require('geometry').ccp;
+
+var ActionInstant = act.FiniteTimeAction.extend(/** @lends cocos.actions.ActionInstant */{
+    /**
+     * @class Base class for actions that triggers instantly. They have no duration.
+     *
+     * @memberOf cocos.actions
+     * @extends cocos.actions.FiniteTimeAction
+     * @constructs
+     */
+    init: function (opts) {
+        ActionInstant.superclass.init.call(this, opts);
+
+        this.duration = 0;
+    },
+    
+    get_isDone: function () {
+        return true;
+    },
+    
+    step: function (dt) {
+        this.update(1);
+    },
+    
+    update: function (t) {
+        // ignore
+    },
+    
+    copy: function() {
+        return this;
+    },
+    
+    reverse: function () {
+        return this.copy();
+    }
+});
+
+/** 
+ * @class Show a node
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionInstant
+ */
+var Show = ActionInstant.extend(/** @lends cocos.actions.Show# */{
+    startWithTarget: function(target) {
+        Show.superclass.startWithTarget.call(this, target);
+        this.target.set('visible', true);
+    },
+
+    copy: function() {
+        return Show.create();
+    },
+    
+    reverse: function() {
+        return exports.Hide.create();
+    }
+});
+
+/** 
+ * @class Hide a node
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionInstant
+ */
+var Hide = ActionInstant.extend(/** @lends cocos.actions.Hide# */{
+    startWithTarget: function(target) {
+        Hide.superclass.startWithTarget.call(this, target);
+        this.target.set('visible', false);
+    },
+
+    copy: function() {
+        return Hide.create();
+    },
+    
+    reverse: function() {
+        return exports.Show.create();
+    }
+});
+
+/** 
+ * @class Toggles the visibility of a node
+ *
+ * @memberOf cocos.actions
+ * @extends cocos.actions.ActionInstant
+ */
+var ToggleVisibility = ActionInstant.extend(/** @lends cocos.actions.ToggleVisibility# */{
+    startWithTarget: function(target) {
+        ToggleVisibility.superclass.startWithTarget.call(this, target);
+        var vis = this.target.get('visible');
+        this.target.set('visible', !vis);
+    },
+    
+    copy: function() {
+        return ToggleVisibility.create();
+    }
+});
+
+var FlipX = ActionInstant.extend(/** @lends cocos.actions.FlipX# */{
+    flipX: false,
+
+    /**
+     * @class Flips a sprite horizontally
+     *
+     * @memberOf cocos.actions
+     * @extends cocos.actions.ActionInstant
+     * @constructs
+     *
+     * @opt {Boolean} flipX Should the sprite be flipped
+     */
+    init: function (opts) {
+        FlipX.superclass.init.call(this, opts);
+
+        this.flipX = opts.flipX;
+    },
+    
+    startWithTarget: function (target) {
+        FlipX.superclass.startWithTarget.call(this, target);
+
+        target.set('flipX', this.flipX);
+    },
+    
+    reverse: function () {
+        return FlipX.create({flipX: !this.flipX});
+    },
+    
+    copy: function () {
+        return FlipX.create({flipX: this.flipX});
+    }
+});
+
+var FlipY = ActionInstant.extend(/** @lends cocos.actions.FlipY# */{
+    flipY: false,
+
+    /**
+     * @class Flips a sprite vertically
+     *
+     * @memberOf cocos.actions
+     * @extends cocos.actions.ActionInstant
+     * @constructs
+     *
+     * @opt {Boolean} flipY Should the sprite be flipped
+     */
+    init: function (opts) {
+        FlipY.superclass.init.call(this, opts);
+
+        this.flipY = opts.flipY;
+    },
+    
+    startWithTarget: function (target) {
+        FlipY.superclass.startWithTarget.call(this, target);
+
+        target.set('flipY', this.flipY);
+    },
+    
+    reverse: function () {
+        return FlipY.create({flipY: !this.flipY});
+    },
+    
+    copy: function () {
+        return FlipY.create({flipY: this.flipY});
+    }
+});
+
+var Place = ActionInstant.extend(/** @lends cocos.actions.Place# */{
+    position: null,
+    
+    /**
+     * @class Places the node in a certain position
+     *
+     * @memberOf cocos.actions
+     * @extends cocos.actions.ActionInstant
+     * @constructs
+     *
+     * @opt {geometry.Point} position
+     */
+    init: function(opts) {
+        Place.superclass.init.call(this, opts);
+        this.set('position', util.copy(opts.position));
+    },
+    
+    startWithTarget: function(target) {
+        Place.superclass.startWithTarget.call(this, target);
+        this.target.set('position', this.position);
+    },
+    
+    copy: function() {
+        return Place.create({position: this.position});
+    }
+});
+
+var CallFunc = ActionInstant.extend(/** @lends cocos.actions.CallFunc# */{
+    callback: null,
+    target: null,
+    method: null,
+    
+    /**
+     * @class Calls a 'callback'
+     *
+     * @memberOf cocos.actions
+     * @extends cocos.actions.ActionInstant
+     * @constructs
+     *
+     * @opt {BObject} target
+     * @opt {String|Function} method
+     */
+    init: function(opts) {
+        CallFunc.superclass.init.call(this, opts);
+        
+        // Save target & method so that copy() can recreate callback
+        this.target = opts.target;
+        this.method = opts.method;
+        this.callback = util.callback(this.target, this.method);
+    },
+    
+    startWithTarget: function(target) {
+        CallFunc.superclass.startWithTarget.call(this, target);
+        this.execute(target);
+    },
+    
+    execute: function(target) {
+        // Pass target to callback
+        this.callback.call(this, target);
+    },
+    
+    copy: function() {
+        return CallFunc.create({target: this.target, method: this.method});
+    }
+});
+
+exports.ActionInstant = ActionInstant;
+exports.Show = Show;
+exports.Hide = Hide;
+exports.ToggleVisibility = ToggleVisibility;
+exports.FlipX = FlipX;
+exports.FlipY = FlipY;
+exports.Place = Place;
+exports.CallFunc = CallFunc;
+
+
+}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/actions/ActionInstant.js
+
+
 __jah__.resources["/libs/cocos2d/Scheduler.js"] = {data: function (exports, require, module, __filename, __dirname) {
 /*globals module exports resource require BObject BArray*/
 /*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
@@ -22518,289 +23287,6 @@ exports.Scheduler = Scheduler;
 }, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/Scheduler.js
 
 
-__jah__.resources["/libs/cocos2d/SpriteFrame.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    geo = require('geometry'),
-    ccp = geo.ccp;
-
-var SpriteFrame = BObject.extend(/** @lends cocos.SpriteFrame# */{
-    rect: null,
-    rotated: false,
-    offset: null,
-    originalSize: null,
-    texture: null,
-
-    /**
-     * Represents a single frame of animation for a cocos.Sprite
-     *
-     * <p>A SpriteFrame has:<br>
-     * - texture: A Texture2D that will be used by the Sprite<br>
-     * - rectangle: A rectangle of the texture</p>
-     *
-     * <p>You can modify the frame of a Sprite by doing:</p>
-     * 
-     * <code>var frame = SpriteFrame.create({texture: texture, rect: rect});
-     * sprite.set('displayFrame', frame);</code>
-     *
-     * @memberOf cocos
-     * @constructs
-     * @extends BObject
-     *
-     * @opt {cocos.Texture2D} texture The texture to draw this frame using
-     * @opt {geometry.Rect} rect The rectangle inside the texture to draw
-     */
-    init: function (opts) {
-        SpriteFrame.superclass.init(this, opts);
-
-        this.texture      = opts.texture;
-        this.rect         = opts.rect;
-        this.rotated      = !!opts.rotate;
-        this.offset       = opts.offset || ccp(0, 0);
-        this.originalSize = opts.originalSize || util.copy(this.rect.size);
-    },
-
-    /**
-     * @ignore
-     */
-    toString: function () {
-        return "[object SpriteFrame | TextureName=" + this.texture.get('name') + ", Rect = (" + this.rect.origin.x + ", " + this.rect.origin.y + ", " + this.rect.size.width + ", " + this.rect.size.height + ")]";
-    },
-
-    /**
-     * Make a copy of this frame
-     *
-     * @returns {cocos.SpriteFrame} Exact copy of this object
-     */
-    copy: function () {
-        return SpriteFrame.create({rect: this.rect, rotated: this.rotated, offset: this.offset, originalSize: this.originalSize, texture: this.texture});
-    }
-
-});
-
-exports.SpriteFrame = SpriteFrame;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/SpriteFrame.js
-
-
-__jah__.resources["/libs/cocos2d/SpriteFrameCache.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray FLIP_Y_AXIS*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    geo = require('geometry'),
-    Plist = require('Plist').Plist,
-    SpriteFrame = require('./SpriteFrame').SpriteFrame,
-    Texture2D = require('./Texture2D').Texture2D;
-
-var SpriteFrameCache = BObject.extend(/** @lends cocos.SpriteFrameCache# */{
-    /**
-     * List of sprite frames
-     * @type Object
-     */
-    spriteFrames: null,
-
-    /**
-     * List of sprite frame aliases
-     * @type Object
-     */
-    spriteFrameAliases: null,
-
-
-    /**
-     * @memberOf cocos
-     * @extends BObject
-     * @constructs
-     * @singleton
-     */
-    init: function () {
-        SpriteFrameCache.superclass.init.call(this);
-
-        this.set('spriteFrames', {});
-        this.set('spriteFrameAliases', {});
-    },
-
-    /**
-     * Add SpriteFrame(s) to the cache
-     *
-     * @param {String} opts.file The filename of a Zwoptex .plist containing the frame definiitons.
-     */
-    addSpriteFrames: function (opts) {
-        var plistPath = opts.file,
-            plist = Plist.create({file: plistPath}),
-            plistData = plist.get('data');
-
-
-        var metaDataDict = plistData.metadata,
-            framesDict = plistData.frames;
-
-        var format = 0,
-            texturePath = null;
-
-        if (metaDataDict) {
-            format = metaDataDict.format;
-            // Get texture path from meta data
-            texturePath = metaDataDict.textureFileName;
-        }
-
-        if (!texturePath) {
-            // No texture path so assuming it's the same name as the .plist but ending in .png
-            texturePath = plistPath.replace(/\.plist$/i, '.png');
-        }
-
-
-        var texture = Texture2D.create({file: texturePath});
-
-        // Add frames
-        for (var frameDictKey in framesDict) {
-            if (framesDict.hasOwnProperty(frameDictKey)) {
-                var frameDict = framesDict[frameDictKey],
-                    spriteFrame = null;
-
-                switch (format) {
-                case 0:
-                    var x = frameDict.x,
-                        y =  frameDict.y,
-                        w =  frameDict.width,
-                        h =  frameDict.height,
-                        ox = frameDict.offsetX,
-                        oy = frameDict.offsetY,
-                        ow = frameDict.originalWidth,
-                        oh = frameDict.originalHeight;
-
-                    // check ow/oh
-                    if (!ow || !oh) {
-                        //console.log("cocos2d: WARNING: originalWidth/Height not found on the CCSpriteFrame. AnchorPoint won't work as expected. Regenerate the .plist");
-                    }
-
-                    if (FLIP_Y_AXIS) {
-                        oy *= -1;
-                    }
-
-                    // abs ow/oh
-                    ow = Math.abs(ow);
-                    oh = Math.abs(oh);
-
-                    // create frame
-                    spriteFrame = SpriteFrame.create({texture: texture,
-                                                         rect: geo.rectMake(x, y, w, h),
-                                                       rotate: false,
-                                                       offset: geo.ccp(ox, oy),
-                                                 originalSize: geo.sizeMake(ow, oh)});
-                    break;
-
-                case 1:
-                case 2:
-                    var frame      = geo.rectFromString(frameDict.frame),
-                        rotated    = !!frameDict.rotated,
-                        offset     = geo.pointFromString(frameDict.offset),
-                        sourceSize = geo.sizeFromString(frameDict.sourceSize);
-
-                    if (FLIP_Y_AXIS) {
-                        offset.y *= -1;
-                    }
-
-
-                    // create frame
-                    spriteFrame = SpriteFrame.create({texture: texture,
-                                                         rect: frame,
-                                                       rotate: rotated,
-                                                       offset: offset,
-                                                 originalSize: sourceSize});
-                    break;
-
-                case 3:
-                    var spriteSize       = geo.sizeFromString(frameDict.spriteSize),
-                        spriteOffset     = geo.pointFromString(frameDict.spriteOffset),
-                        spriteSourceSize = geo.sizeFromString(frameDict.spriteSourceSize),
-                        textureRect      = geo.rectFromString(frameDict.textureRect),
-                        textureRotated   = frameDict.textureRotated;
-                    
-
-                    if (FLIP_Y_AXIS) {
-                        spriteOffset.y *= -1;
-                    }
-
-                    // get aliases
-                    var aliases = frameDict.aliases;
-                    for (var i = 0, len = aliases.length; i < len; i++) {
-                        var alias = aliases[i];
-                        this.get('spriteFrameAliases')[frameDictKey] = alias;
-                    }
-                    
-                    // create frame
-                    spriteFrame = SpriteFrame.create({texture: texture,
-                                                         rect: geo.rectMake(textureRect.origin.x, textureRect.origin.y, spriteSize.width, spriteSize.height),
-                                                       rotate: textureRotated,
-                                                       offset: spriteOffset,
-                                                 originalSize: spriteSourceSize});
-                    break;
-
-                default:
-                    throw "Unsupported Zwoptex format: " + format;
-                }
-
-                // Add sprite frame
-                this.get('spriteFrames')[frameDictKey] = spriteFrame;
-            }
-        }
-    },
-
-    /**
-     * Get a single SpriteFrame
-     *
-     * @param {String} opts.name The name of the sprite frame
-     * @returns {cocos.SpriteFrame} The sprite frame
-     */
-    getSpriteFrame: function (opts) {
-        var name = opts.name;
-
-        var frame = this.get('spriteFrames')[name];
-
-        if (!frame) {
-            // No frame, look for an alias
-            var key = this.get('spriteFrameAliases')[name];
-
-            if (key) {
-                frame = this.get('spriteFrames')[key];
-            }
-
-            if (!frame) {
-                throw "Unable to find frame: " + name;
-            }
-        }
-
-        return frame;
-    }
-});
-
-/**
- * Class methods
- */
-util.extend(SpriteFrameCache, /** @lends cocos.SpriteFrameCache */{
-    /**
-     * @field
-     * @name cocos.SpriteFrameCache.sharedSpriteFrameCache
-     * @type cocos.SpriteFrameCache
-     */
-    get_sharedSpriteFrameCache: function (key) {
-        if (!this._instance) {
-            this._instance = this.create();
-        }
-
-        return this._instance;
-    }
-});
-
-exports.SpriteFrameCache = SpriteFrameCache;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/SpriteFrameCache.js
-
-
 __jah__.resources["/libs/cocos2d/Texture2D.js"] = {data: function (exports, require, module, __filename, __dirname) {
 /*globals module exports resource require BObject BArray*/
 /*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
@@ -22900,128 +23386,6 @@ exports.Texture2D = Texture2D;
 }, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/Texture2D.js
 
 
-__jah__.resources["/libs/cocos2d/TextureAtlas.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray FLIP_Y_AXIS*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    Texture2D = require('./Texture2D').Texture2D;
-
-
-/* QUAD STRUCTURE
- quad = {
-     drawRect: <rect>, // Where the quad is drawn to
-     textureRect: <rect>  // The slice of the texture to draw in drawRect
- }
-*/
-
-var TextureAtlas = BObject.extend(/** @lends cocos.TextureAtlas# */{
-    quads: null,
-    imgElement: null,
-    texture: null,
-
-    /**
-     * A single texture that can represent lots of smaller images
-     *
-     * @memberOf cocos
-     * @constructs
-     * @extends BObject
-     *
-     * @opt {String} file The file path of the image to use as a texture
-     * @opt {Texture2D|HTMLImageElement} [data] Image data to read from
-     * @opt {CanvasElement} [canvas] A canvas to use as a texture
-     */
-    init: function (opts) {
-        var file = opts.file,
-            data = opts.data,
-            texture = opts.texture,
-            canvas = opts.canvas;
-
-        if (canvas) {
-            // If we've been given a canvas element then we'll use that for our image
-            this.imgElement = canvas;
-        } else {
-            texture = Texture2D.create({texture: texture, file: file, data: data});
-            this.set('texture', texture);
-            this.imgElement = texture.get('imgElement');
-        }
-
-        this.quads = [];
-    },
-
-    insertQuad: function (opts) {
-        var quad = opts.quad,
-            index = opts.index || 0;
-
-        this.quads.splice(index, 0, quad);
-    },
-    removeQuad: function (opts) {
-        var index = opts.index;
-
-        this.quads.splice(index, 1);
-    },
-
-
-    drawQuads: function (ctx) {
-        util.each(this.quads, util.callback(this, function (quad) {
-            if (!quad) {
-                return;
-            }
-
-            this.drawQuad(ctx, quad);
-        }));
-    },
-
-    drawQuad: function (ctx, quad) {
-        var sx = quad.textureRect.origin.x,
-            sy = quad.textureRect.origin.y,
-            sw = quad.textureRect.size.width, 
-            sh = quad.textureRect.size.height;
-
-        var dx = quad.drawRect.origin.x,
-            dy = quad.drawRect.origin.y,
-            dw = quad.drawRect.size.width, 
-            dh = quad.drawRect.size.height;
-
-
-        var scaleX = 1;
-        var scaleY = 1;
-
-        if (FLIP_Y_AXIS) {
-            dy -= dh;
-            dh *= -1;
-        }
-
-            
-        if (dw < 0) {
-            dw *= -1;
-            scaleX = -1;
-        }
-            
-        if (dh < 0) {
-            dh *= -1;
-            scaleY = -1;
-        }
-
-        ctx.scale(scaleX, scaleY);
-
-        var img = this.get('imgElement');
-        ctx.drawImage(img, 
-            sx, sy, // Draw slice from x,y
-            sw, sh, // Draw slice size
-            dx, dy, // Draw at 0, 0
-            dw, dh  // Draw size
-        );
-        ctx.scale(1, 1);
-    }
-});
-
-exports.TextureAtlas = TextureAtlas;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/TextureAtlas.js
-
-
 __jah__.resources["/libs/cocos2d/TMXOrientation.js"] = {data: function (exports, require, module, __filename, __dirname) {
 /*globals module exports resource require BObject BArray*/
 /*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
@@ -23054,370 +23418,6 @@ var TMXOrientation = /** @lends cocos.TMXOrientation */{
 module.exports = TMXOrientation;
 
 }, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/TMXOrientation.js
-
-
-__jah__.resources["/libs/cocos2d/TMXXMLParser.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/*globals module exports resource require BObject BArray DOMParser console*/
-/*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
-"use strict";
-
-var util = require('util'),
-    path = require('path'),
-    ccp = require('geometry').ccp,
-    base64 = require('base64'),
-    gzip   = require('gzip'),
-    TMXOrientationOrtho = require('./TMXOrientation').TMXOrientationOrtho,
-    TMXOrientationHex = require('./TMXOrientation').TMXOrientationHex,
-    TMXOrientationIso = require('./TMXOrientation').TMXOrientationIso;
-
-var TMXTilesetInfo = BObject.extend(/** @lends cocos.TMXTilesetInfo# */{
-    name: '',
-    firstGID: 0,
-    tileSize: null,
-    spacing: 0,
-    margin: 0,
-    sourceImage: null,
-
-    /**
-     * @memberOf cocos
-     * @constructs
-     * @extends BObject
-     */
-    init: function () {
-        TMXTilesetInfo.superclass.init.call(this);
-    },
-
-    rectForGID: function (gid) {
-        var rect = {size: {}, origin: ccp(0, 0)};
-        rect.size = util.copy(this.tileSize);
-        
-        gid = gid - this.firstGID;
-
-        var imgSize = this.get('imageSize');
-        
-        var maxX = Math.floor((imgSize.width - this.margin * 2 + this.spacing) / (this.tileSize.width + this.spacing));
-        
-        rect.origin.x = (gid % maxX) * (this.tileSize.width + this.spacing) + this.margin;
-        rect.origin.y = Math.floor(gid / maxX) * (this.tileSize.height + this.spacing) + this.margin;
-        
-        return rect;
-    }
-});
-
-var TMXLayerInfo = BObject.extend(/** @lends cocos.TMXLayerInfo# */{
-    name: '',
-    layerSize: null,
-    tiles: null,
-    visible: true,
-    opacity: 255,
-    minGID: 100000,
-    maxGID: 0,
-    properties: null,
-    offset: null,
-
-    /**
-     * @memberOf cocos
-     * @constructs
-     * @extends BObject
-     */
-    init: function () {
-        TMXLayerInfo.superclass.init.call(this);
-
-        this.properties = {};
-        this.offset = ccp(0, 0);
-    }
-});
-
-var TMXObjectGroup = BObject.extend(/** @lends cocos.TMXObjectGroup# */{
-    name: '',
-    properties: null,
-    offset: null,
-    objects: null,
-
-    /**
-     * @memberOf cocos
-     * @constructs
-     * @extends BObject
-     */
-    init: function () {
-        TMXObjectGroup.superclass.init.call(this);
-
-        this.properties = {};
-        this.objects = {};
-        this.offset = ccp(0, 0);
-    },
-
-    /**
-     * Get the value for the specific property name
-     *
-     * @opt {String} name Property name
-     * @returns {String} Property value
-     */
-    getProperty: function (opts) {
-        var propertyName = opts.name;
-        return this.properties[propertyName];
-    },
-
-    /**
-     * @deprected Since v0.2. You should now use cocos.TMXObjectGroup#getProperty
-     */
-    propertyNamed: function (opts) {
-        console.warn('TMXObjectGroup#propertyNamed is deprected. Use TMXTiledMap#getProperty instread');
-        return this.getProperty(opts);
-    },
-
-    /**
-     * Get the object for the specific object name. It will return the 1st
-     * object found on the array for the given name.
-     *
-     * @opt {String} name Object name
-     * @returns {Object} Object
-     */
-    getObject: function (opts) {
-        var objectName = opts.name;
-        var object = null;
-        
-        this.objects.forEach(function (item) {
-            if (item.name == objectName) {
-                object = item;
-            }
-        });
-        if (object !== null) {
-            return object;
-        }
-    },
-
-    /**
-     * @deprected Since v0.2. You should now use cocos.TMXObjectGroup#getProperty
-     */
-    objectNamed: function (opts) {
-        console.warn('TMXObjectGroup#objectNamed is deprected. Use TMXObjectGroup#getObject instread');
-        return this.getObject(opts);
-    }
-});
-
-var TMXMapInfo = BObject.extend(/** @lends cocos.TMXMapInfo# */{
-    filename: '',
-    orientation: 0,
-    mapSize: null,
-    tileSize: null,
-    layer: null,
-    tilesets: null,
-    objectGroups: null,
-    properties: null,
-    tileProperties: null,
-
-    /**
-     * @memberOf cocos
-     * @constructs
-     * @extends BObject
-     *
-     * @param {String} tmxFile The file path of the TMX file to load
-     */
-    init: function (tmxFile) {
-        TMXMapInfo.superclass.init.call(this, tmxFile);
-
-        this.tilesets = [];
-        this.layers = [];
-        this.objectGroups = [];
-        this.properties = {};
-        this.tileProperties = {};
-        this.filename = tmxFile;
-
-        this.parseXMLFile(tmxFile);
-    },
-
-    parseXMLFile: function (xmlFile) {
-        var parser = new DOMParser(),
-            doc = parser.parseFromString(resource(xmlFile), 'text/xml');
-
-        // PARSE <map>
-        var map = doc.documentElement;
-
-        // Set Orientation
-        switch (map.getAttribute('orientation')) {
-        case 'orthogonal':
-            this.orientation = TMXOrientationOrtho;
-            break;
-        case 'isometric':
-            this.orientation = TMXOrientationIso;
-            break;
-        case 'hexagonal':
-            this.orientation = TMXOrientationHex;
-            break;
-        default:
-            throw "cocos2d: TMXFomat: Unsupported orientation: " + map.getAttribute('orientation');
-        }
-        this.mapSize = {width: parseInt(map.getAttribute('width'), 10), height: parseInt(map.getAttribute('height'), 10)};
-        this.tileSize = {width: parseInt(map.getAttribute('tilewidth'), 10), height: parseInt(map.getAttribute('tileheight'), 10)};
-
-
-        // PARSE <tilesets>
-        var tilesets = map.getElementsByTagName('tileset');
-        var i, j, len, jen, s;
-        for (i = 0, len = tilesets.length; i < len; i++) {
-            var t = tilesets[i];
-
-            var tileset = TMXTilesetInfo.create();
-            tileset.set('name', t.getAttribute('name'));
-            tileset.set('firstGID', parseInt(t.getAttribute('firstgid'), 10));
-            if (t.getAttribute('spacing')) {
-                tileset.set('spacing', parseInt(t.getAttribute('spacing'), 10));
-            }
-            if (t.getAttribute('margin')) {
-                tileset.set('margin', parseInt(t.getAttribute('margin'), 10));
-            }
-
-            s = {};
-            s.width = parseInt(t.getAttribute('tilewidth'), 10);
-            s.height = parseInt(t.getAttribute('tileheight'), 10);
-            tileset.set('tileSize', s);
-
-            // PARSE <image> We assume there's only 1
-            var image = t.getElementsByTagName('image')[0];
-            tileset.set('sourceImage', path.join(path.dirname(this.filename), image.getAttribute('source')));
-
-            this.tilesets.push(tileset);
-        }
-
-        // PARSE <layers>
-        var layers = map.getElementsByTagName('layer');
-        for (i = 0, len = layers.length; i < len; i++) {
-            var l = layers[i];
-            var data = l.getElementsByTagName('data')[0];
-            var layer = TMXLayerInfo.create();
-
-            layer.set('name', l.getAttribute('name'));
-            if (l.getAttribute('visible') !== false) {
-                layer.set('visible', true);
-            } else {
-                layer.set('visible', !!parseInt(l.getAttribute('visible'), 10));
-            }
-
-            s = {};
-            s.width = parseInt(l.getAttribute('width'), 10);
-            s.height = parseInt(l.getAttribute('height'), 10);
-            layer.set('layerSize', s);
-
-            var opacity = l.getAttribute('opacity');
-            if (!opacity && opacity !== 0) {
-                layer.set('opacity', 255);
-            } else {
-                layer.set('opacity', 255 * parseFloat(opacity));
-            }
-
-            var x = parseInt(l.getAttribute('x'), 10),
-                y = parseInt(l.getAttribute('y'), 10);
-            if (isNaN(x)) {
-                x = 0;
-            }
-            if (isNaN(y)) {
-                y = 0;
-            }
-            layer.set('offset', ccp(x, y));
-
-
-            // Firefox has a 4KB limit on node values. It will split larger
-            // nodes up into multiple nodes. So, we'll stitch them back
-            // together.
-            var nodeValue = '';
-            for (j = 0, jen = data.childNodes.length; j < jen; j++) {
-                nodeValue += data.childNodes[j].nodeValue;
-            }
-
-            // Unpack the tilemap data
-            var compression = data.getAttribute('compression');
-            switch (compression) {
-            case 'gzip':
-                layer.set('tiles', gzip.unzipBase64AsArray(nodeValue, 4));
-                break;
-                
-            // Uncompressed
-            case null:
-            case '': 
-                layer.set('tiles', base64.decodeAsArray(nodeValue, 4));
-                break;
-
-            default: 
-                throw "Unsupported TMX Tile Map compression: " + compression;
-            }
-
-            this.layers.push(layer);
-        }
-
-        // TODO PARSE <tile>
-
-        // PARSE <objectgroup>
-        var objectgroups = map.getElementsByTagName('objectgroup');
-        for (i = 0, len = objectgroups.length; i < len; i++) {
-            var g = objectgroups[i],
-                objectGroup = TMXObjectGroup.create();
-
-            objectGroup.set('name', g.getAttribute('name'));
-            
-            var properties = g.querySelectorAll('objectgroup > properties property'),
-                propertiesValue = {},
-                property;
-            
-            for (j = 0; j < properties.length; j++) {
-                property = properties[j];
-                if (property.getAttribute('name')) {
-                    propertiesValue[property.getAttribute('name')] = property.getAttribute('value');
-                }
-            }
-           
-            objectGroup.set('properties', propertiesValue);
-
-            var objectsArray = [],
-                objects = g.querySelectorAll('object');
-
-            for (j = 0; j < objects.length; j++) {
-                var object = objects[j];
-                var objectValue = {
-                    x       : parseInt(object.getAttribute('x'), 10),
-                    y       : parseInt(object.getAttribute('y'), 10),
-                    width   : parseInt(object.getAttribute('width'), 10),
-                    height  : parseInt(object.getAttribute('height'), 10)
-                };
-                if (object.getAttribute('name')) {
-                    objectValue.name = object.getAttribute('name');
-                }
-                if (object.getAttribute('type')) {
-                    objectValue.type = object.getAttribute('type');
-                }
-                properties = object.querySelectorAll('property');
-                for (var k = 0; k < properties.length; k++) {
-                    property = properties[k];
-                    if (property.getAttribute('name')) {
-                        objectValue[property.getAttribute('name')] = property.getAttribute('value');
-                    }
-                }
-                objectsArray.push(objectValue);
-
-            }
-            objectGroup.set('objects', objectsArray);
-            this.objectGroups.push(objectGroup);
-        }
-
-
-        // PARSE <map><property>
-        var properties = doc.querySelectorAll('map > properties > property');
-
-        for (i = 0; i < properties.length; i++) {
-            var property = properties[i];
-            if (property.getAttribute('name')) {
-                this.properties[property.getAttribute('name')] = property.getAttribute('value');
-            }
-        }
-    }
-});
-
-exports.TMXMapInfo = TMXMapInfo;
-exports.TMXLayerInfo = TMXLayerInfo;
-exports.TMXTilesetInfo = TMXTilesetInfo;
-exports.TMXObjectGroup = TMXObjectGroup;
-
-}, mimetype: "application/javascript", remote: false}; // END: /libs/cocos2d/TMXXMLParser.js
 
 
 })();

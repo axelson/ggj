@@ -1,357 +1,5 @@
 (function(){
 if (!window.__jah__) window.__jah__ = {resources:{}, assetURL: "assets"};
-__jah__.resources["/__builtin__/events.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/**
- * @namespace
- * Support for listening for and triggering events
- */
-var events = {};
-
-/**
- * @private
- * @ignore
- * Returns the event listener property of an object, creating it if it doesn't
- * already exist.
- *
- * @returns {Object}
- */
-function getListeners(obj, eventName) {
-    if (!obj.js_listeners_) {
-        obj.js_listeners_ = {};
-    }
-    if (!eventName) {
-        return obj.js_listeners_;
-    }
-    if (!obj.js_listeners_[eventName]) {
-        obj.js_listeners_[eventName] = {};
-    }
-    return obj.js_listeners_[eventName];
-}
-
-/**
- * @private
- * @ignore
- * Keep track of the next ID for each new EventListener
- */
-var eventID = 0;
-
-/**
- * @class
- * Represents an event being listened to. You should not create instances of
- * this directly, it is instead returned by events.addListener
- *
- * @extends Object
- * 
- * @param {Object} source Object to listen to for an event
- * @param {String} eventName Name of the event to listen for
- * @param {Function} handler Callback to fire when the event triggers
- */
-events.EventListener = function (source, eventName, handler) {
-    /**
-     * Object to listen to for an event
-     * @type Object 
-     */
-    this.source = source;
-    
-    /**
-     * Name of the event to listen for
-     * @type String
-     */
-    this.eventName = eventName;
-
-    /**
-     * Callback to fire when the event triggers
-     * @type Function
-     */
-    this.handler = handler;
-
-    /**
-     * Unique ID number for this instance
-     * @type Integer 
-     */
-    this.id = ++eventID;
-
-    getListeners(source, eventName)[this.id] = this;
-};
-
-/**
- * Register an event listener
- *
- * @param {Object} source Object to listen to for an event
- * @param {String|Stringp[} eventName Name or Array of names of the event(s) to listen for
- * @param {Function} handler Callback to fire when the event triggers
- *
- * @returns {events.EventListener|events.EventListener[]} The event listener(s). Pass to removeListener to destroy it.
- */
-events.addListener = function (source, eventName, handler) {
-    if (eventName instanceof Array) {
-        var listeners = [];
-        for (var i = 0, len = eventName.length; i < len; i++) {
-            listeners.push(new events.EventListener(source, eventName[i], handler));
-        }
-        return listeners;
-    } else {
-        return new events.EventListener(source, eventName, handler);
-    }
-};
-
-/**
- * Trigger an event. All listeners will be notified.
- *
- * @param {Object} source Object to trigger the event on
- * @param {String} eventName Name of the event to trigger
- */
-events.trigger = function (source, eventName) {
-    var listeners = getListeners(source, eventName),
-        args = Array.prototype.slice.call(arguments, 2),
-        eventID,
-        l;
-
-    for (eventID in listeners) {
-        if (listeners.hasOwnProperty(eventID)) {
-            l = listeners[eventID];
-            if (l) {
-                l.handler.apply(undefined, args);
-            }
-        }
-    }
-};
-
-/**
- * Remove a previously registered event listener
- *
- * @param {events.EventListener} listener EventListener to remove, as returned by events.addListener
- */
-events.removeListener = function (listener) {
-    delete getListeners(listener.source, listener.eventName)[listener.eventID];
-};
-
-/**
- * Remove a all event listeners for a given event
- *
- * @param {Object} source Object to remove listeners from
- * @param {String} eventName Name of event to remove listeners from
- */
-events.clearListeners = function (source, eventName) {
-    var listeners = getListeners(source, eventName),
-        eventID;
-
-
-    for (eventID in listeners) {
-        if (listeners.hasOwnProperty(eventID)) {
-            var l = listeners[eventID];
-            if (l) {
-                events.removeListener(l);
-            }
-        }
-    }
-};
-
-/**
- * Remove all event listeners on an object
- *
- * @param {Object} source Object to remove listeners from
- */
-events.clearInstanceListeners = function (source) {
-    var listeners = getListeners(source),
-        eventID;
-
-    for (var eventName in listeners) {
-        if (listeners.hasOwnProperty(eventName)) {
-            var el = listeners[eventName];
-            for (eventID in el) {
-                if (el.hasOwnProperty(eventID)) {
-                    var l = el[eventID];
-                    if (l) {
-                        events.removeListener(l);
-                    }
-                }
-            }
-        }
-    }
-};
-
-module.exports = events;
-
-}, mimetype: "application/javascript", remote: false}; // END: /__builtin__/events.js
-
-
-__jah__.resources["/__builtin__/index.js"] = {data: function (exports, require, module, __filename, __dirname) {
-"use strict";
-
-/**
- * @namespace
- * Useful utility functions
- */
-var jah = {
-    /**
-     * Creates a deep copy of an object
-     *
-     * @param {Object} obj The Object to copy
-     * @returns {Object} A copy of the original Object
-     */
-    copy: function(obj) {
-        if (obj === null) {
-            return null;
-        }
-
-        var copy;
-
-        if (obj instanceof Array) {
-            copy = [];
-            for (var i = 0, len = obj.length; i < len; i++) {
-                copy[i] = jah.copy(obj[i]);
-            }
-        } else if (typeof(obj) == 'object') {
-            if (typeof(obj.copy) == 'function') {
-                copy = obj.copy();
-            } else {
-                copy = {};
-
-                var o, x;
-                for (x in obj) {
-                    copy[x] = jah.copy(obj[x]);
-                }
-            }
-        } else {
-            // Primative type. Doesn't need copying
-            copy = obj;
-        }
-
-        return copy;
-    },
-
-    /**
-     * Iterates over an array and calls a function for each item.
-     *
-     * @param {Array} arr An Array to iterate over
-     * @param {Function} func A function to call for each item in the array
-     * @returns {Array} The original array
-     */
-    each: function(arr, func) {
-        var i = 0,
-            len = arr.length;
-        for (i = 0; i < len; i++) {
-            func(arr[i], i);
-        }
-
-        return arr;
-    },
-
-    /**
-     * Iterates over an array, calls a function for each item and returns the results.
-     *
-     * @param {Array} arr An Array to iterate over
-     * @param {Function} func A function to call for each item in the array
-     * @returns {Array} The return values from each function call
-     */
-    map: function(arr, func) {
-        var i = 0,
-            len = arr.length,
-            result = [];
-
-        for (i = 0; i < len; i++) {
-            result.push(func(arr[i], i));
-        }
-
-        return result;
-    },
-
-    domReady: function() {
-        if (this._isReady) {
-            return;
-        }
-
-        if (!document.body) {
-            setTimeout(function() { jah.domReady(); }, 13);
-        }
-
-        window.__isReady = true;
-
-        if (window.__readyList) {
-            var fn, i = 0;
-            while ( (fn = window.__readyList[ i++ ]) ) {
-                fn.call(document);
-            }
-
-            window.__readyList = null;
-            delete window.__readyList;
-        }
-    },
-
-
-    /**
-     * Adapted from jQuery
-     * @ignore
-     */
-    bindReady: function() {
-
-        if (window.__readyBound) {
-            return;
-        }
-
-        window.__readyBound = true;
-
-        // Catch cases where $(document).ready() is called after the
-        // browser event has already occurred.
-        if ( document.readyState === "complete" ) {
-            return jah.domReady();
-        }
-
-        // Mozilla, Opera and webkit nightlies currently support this event
-        if ( document.addEventListener ) {
-            // Use the handy event callback
-            //document.addEventListener( "DOMContentLoaded", DOMContentLoaded, false );
-            
-            // A fallback to window.onload, that will always work
-            window.addEventListener( "load", jah.domReady, false );
-
-        // If IE event model is used
-        } else if ( document.attachEvent ) {
-            // ensure firing before onload,
-            // maybe late but safe also for iframes
-            //document.attachEvent("onreadystatechange", DOMContentLoaded);
-            
-            // A fallback to window.onload, that will always work
-            window.attachEvent( "onload", jah.domReady );
-
-            // If IE and not a frame
-            /*
-            // continually check to see if the document is ready
-            var toplevel = false;
-
-            try {
-                toplevel = window.frameElement == null;
-            } catch(e) {}
-
-            if ( document.documentElement.doScroll && toplevel ) {
-                doScrollCheck();
-            }
-            */
-        }
-    },
-
-
-
-    ready: function(func) {
-        if (window.__isReady) {
-            func()
-        } else {
-            if (!window.__readyList) {
-                window.__readyList = [];
-            }
-            window.__readyList.push(func);
-        }
-
-        jah.bindReady();
-    },
-}
-
-module.exports = jah;
-
-}, mimetype: "application/javascript", remote: false}; // END: /__builtin__/index.js
-
-
 __jah__.resources["/__builtin__/init.js"] = {data: function (exports, require, module, __filename, __dirname) {
 if (!Object.keys) {
     /**
@@ -427,105 +75,6 @@ if (!window.requestAnimationFrame) {
 }
 
 }, mimetype: "application/javascript", remote: false}; // END: /__builtin__/init.js
-
-
-__jah__.resources["/__builtin__/path.js"] = {data: function (exports, require, module, __filename, __dirname) {
-/** @namespace */
-var path = {
-    /**
-     * Returns full directory path for the filename given. The path must be formed using forward slashes '/'.
-     *
-     * @param {String} path Path to return the directory name of
-     * @returns {String} Directory name
-     */
-    dirname: function(path) {
-        var tokens = path.split('/');
-        tokens.pop();
-        return tokens.join('/');
-    },
-
-    /**
-     * Returns just the filename portion of a path.
-     *
-     * @param {String} path Path to return the filename portion of
-     * @returns {String} Filename
-     */
-    basename: function(path) {
-        var tokens = path.split('/');
-        return tokens[tokens.length-1];
-    },
-
-    /**
-     * Joins multiple paths together to form a single path
-     * @param {String} ... Any number of string arguments to join together
-     * @returns {String} The joined path
-     */
-    join: function () {
-        return module.exports.normalize(Array.prototype.join.call(arguments, "/"));
-    },
-
-    /**
-     * Tests if a path exists
-     *
-     * @param {String} path Path to test
-     * @returns {Boolean} True if the path exists, false if not
-     */
-    exists: function(path) {
-        return (__jah__.resources[path] !== undefined);
-    },
-
-    /**
-     * @private
-     */
-    normalizeArray: function (parts, keepBlanks) {
-      var directories = [], prev;
-      for (var i = 0, l = parts.length - 1; i <= l; i++) {
-        var directory = parts[i];
-
-        // if it's blank, but it's not the first thing, and not the last thing, skip it.
-        if (directory === "" && i !== 0 && i !== l && !keepBlanks) continue;
-
-        // if it's a dot, and there was some previous dir already, then skip it.
-        if (directory === "." && prev !== undefined) continue;
-
-        // if it starts with "", and is a . or .., then skip it.
-        if (directories.length === 1 && directories[0] === "" && (
-            directory === "." || directory === "..")) continue;
-
-        if (
-          directory === ".."
-          && directories.length
-          && prev !== ".."
-          && prev !== "."
-          && prev !== undefined
-          && (prev !== "" || keepBlanks)
-        ) {
-          directories.pop();
-          prev = directories.slice(-1)[0]
-        } else {
-          if (prev === ".") directories.pop();
-          directories.push(directory);
-          prev = directory;
-        }
-      }
-      return directories;
-    },
-
-    /**
-     * Returns the real path by expanding any '.' and '..' portions
-     *
-     * @param {String} path Path to normalize
-     * @param {Boolean} [keepBlanks=false] Whether to keep blanks. i.e. double slashes in a path
-     * @returns {String} Normalized path
-     */
-    normalize: function (path, keepBlanks) {
-      return module.exports.normalizeArray(path.split("/"), keepBlanks).join("/");
-    }
-};
-
-module.exports = path;
-
-}, mimetype: "application/javascript", remote: false}; // END: /__builtin__/path.js
 
 
 __jah__.resources["/__builtin__/preloader.js"] = {data: function (exports, require, module, __filename, __dirname) {
@@ -744,6 +293,182 @@ exports.RemoteScript = RemoteScript
 }, mimetype: "application/javascript", remote: false}; // END: /__builtin__/remote_resources.js
 
 
+__jah__.resources["/__builtin__/index.js"] = {data: function (exports, require, module, __filename, __dirname) {
+"use strict";
+
+/**
+ * @namespace
+ * Useful utility functions
+ */
+var jah = {
+    /**
+     * Creates a deep copy of an object
+     *
+     * @param {Object} obj The Object to copy
+     * @returns {Object} A copy of the original Object
+     */
+    copy: function(obj) {
+        if (obj === null) {
+            return null;
+        }
+
+        var copy;
+
+        if (obj instanceof Array) {
+            copy = [];
+            for (var i = 0, len = obj.length; i < len; i++) {
+                copy[i] = jah.copy(obj[i]);
+            }
+        } else if (typeof(obj) == 'object') {
+            if (typeof(obj.copy) == 'function') {
+                copy = obj.copy();
+            } else {
+                copy = {};
+
+                var o, x;
+                for (x in obj) {
+                    copy[x] = jah.copy(obj[x]);
+                }
+            }
+        } else {
+            // Primative type. Doesn't need copying
+            copy = obj;
+        }
+
+        return copy;
+    },
+
+    /**
+     * Iterates over an array and calls a function for each item.
+     *
+     * @param {Array} arr An Array to iterate over
+     * @param {Function} func A function to call for each item in the array
+     * @returns {Array} The original array
+     */
+    each: function(arr, func) {
+        var i = 0,
+            len = arr.length;
+        for (i = 0; i < len; i++) {
+            func(arr[i], i);
+        }
+
+        return arr;
+    },
+
+    /**
+     * Iterates over an array, calls a function for each item and returns the results.
+     *
+     * @param {Array} arr An Array to iterate over
+     * @param {Function} func A function to call for each item in the array
+     * @returns {Array} The return values from each function call
+     */
+    map: function(arr, func) {
+        var i = 0,
+            len = arr.length,
+            result = [];
+
+        for (i = 0; i < len; i++) {
+            result.push(func(arr[i], i));
+        }
+
+        return result;
+    },
+
+    domReady: function() {
+        if (this._isReady) {
+            return;
+        }
+
+        if (!document.body) {
+            setTimeout(function() { jah.domReady(); }, 13);
+        }
+
+        window.__isReady = true;
+
+        if (window.__readyList) {
+            var fn, i = 0;
+            while ( (fn = window.__readyList[ i++ ]) ) {
+                fn.call(document);
+            }
+
+            window.__readyList = null;
+            delete window.__readyList;
+        }
+    },
+
+
+    /**
+     * Adapted from jQuery
+     * @ignore
+     */
+    bindReady: function() {
+
+        if (window.__readyBound) {
+            return;
+        }
+
+        window.__readyBound = true;
+
+        // Catch cases where $(document).ready() is called after the
+        // browser event has already occurred.
+        if ( document.readyState === "complete" ) {
+            return jah.domReady();
+        }
+
+        // Mozilla, Opera and webkit nightlies currently support this event
+        if ( document.addEventListener ) {
+            // Use the handy event callback
+            //document.addEventListener( "DOMContentLoaded", DOMContentLoaded, false );
+            
+            // A fallback to window.onload, that will always work
+            window.addEventListener( "load", jah.domReady, false );
+
+        // If IE event model is used
+        } else if ( document.attachEvent ) {
+            // ensure firing before onload,
+            // maybe late but safe also for iframes
+            //document.attachEvent("onreadystatechange", DOMContentLoaded);
+            
+            // A fallback to window.onload, that will always work
+            window.attachEvent( "onload", jah.domReady );
+
+            // If IE and not a frame
+            /*
+            // continually check to see if the document is ready
+            var toplevel = false;
+
+            try {
+                toplevel = window.frameElement == null;
+            } catch(e) {}
+
+            if ( document.documentElement.doScroll && toplevel ) {
+                doScrollCheck();
+            }
+            */
+        }
+    },
+
+
+
+    ready: function(func) {
+        if (window.__isReady) {
+            func()
+        } else {
+            if (!window.__readyList) {
+                window.__readyList = [];
+            }
+            window.__readyList.push(func);
+        }
+
+        jah.bindReady();
+    },
+}
+
+module.exports = jah;
+
+}, mimetype: "application/javascript", remote: false}; // END: /__builtin__/index.js
+
+
 __jah__.resources["/__builtin__/system.js"] = {data: function (exports, require, module, __filename, __dirname) {
 /** @namespace */
 var system = {
@@ -773,6 +498,281 @@ if (window.console) {
 }
 
 }, mimetype: "application/javascript", remote: false}; // END: /__builtin__/system.js
+
+
+__jah__.resources["/__builtin__/events.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/**
+ * @namespace
+ * Support for listening for and triggering events
+ */
+var events = {};
+
+/**
+ * @private
+ * @ignore
+ * Returns the event listener property of an object, creating it if it doesn't
+ * already exist.
+ *
+ * @returns {Object}
+ */
+function getListeners(obj, eventName) {
+    if (!obj.js_listeners_) {
+        obj.js_listeners_ = {};
+    }
+    if (!eventName) {
+        return obj.js_listeners_;
+    }
+    if (!obj.js_listeners_[eventName]) {
+        obj.js_listeners_[eventName] = {};
+    }
+    return obj.js_listeners_[eventName];
+}
+
+/**
+ * @private
+ * @ignore
+ * Keep track of the next ID for each new EventListener
+ */
+var eventID = 0;
+
+/**
+ * @class
+ * Represents an event being listened to. You should not create instances of
+ * this directly, it is instead returned by events.addListener
+ *
+ * @extends Object
+ * 
+ * @param {Object} source Object to listen to for an event
+ * @param {String} eventName Name of the event to listen for
+ * @param {Function} handler Callback to fire when the event triggers
+ */
+events.EventListener = function (source, eventName, handler) {
+    /**
+     * Object to listen to for an event
+     * @type Object 
+     */
+    this.source = source;
+    
+    /**
+     * Name of the event to listen for
+     * @type String
+     */
+    this.eventName = eventName;
+
+    /**
+     * Callback to fire when the event triggers
+     * @type Function
+     */
+    this.handler = handler;
+
+    /**
+     * Unique ID number for this instance
+     * @type Integer 
+     */
+    this.id = ++eventID;
+
+    getListeners(source, eventName)[this.id] = this;
+};
+
+/**
+ * Register an event listener
+ *
+ * @param {Object} source Object to listen to for an event
+ * @param {String|Stringp[} eventName Name or Array of names of the event(s) to listen for
+ * @param {Function} handler Callback to fire when the event triggers
+ *
+ * @returns {events.EventListener|events.EventListener[]} The event listener(s). Pass to removeListener to destroy it.
+ */
+events.addListener = function (source, eventName, handler) {
+    if (eventName instanceof Array) {
+        var listeners = [];
+        for (var i = 0, len = eventName.length; i < len; i++) {
+            listeners.push(new events.EventListener(source, eventName[i], handler));
+        }
+        return listeners;
+    } else {
+        return new events.EventListener(source, eventName, handler);
+    }
+};
+
+/**
+ * Trigger an event. All listeners will be notified.
+ *
+ * @param {Object} source Object to trigger the event on
+ * @param {String} eventName Name of the event to trigger
+ */
+events.trigger = function (source, eventName) {
+    var listeners = getListeners(source, eventName),
+        args = Array.prototype.slice.call(arguments, 2),
+        eventID,
+        l;
+
+    for (eventID in listeners) {
+        if (listeners.hasOwnProperty(eventID)) {
+            l = listeners[eventID];
+            if (l) {
+                l.handler.apply(undefined, args);
+            }
+        }
+    }
+};
+
+/**
+ * Remove a previously registered event listener
+ *
+ * @param {events.EventListener} listener EventListener to remove, as returned by events.addListener
+ */
+events.removeListener = function (listener) {
+    delete getListeners(listener.source, listener.eventName)[listener.eventID];
+};
+
+/**
+ * Remove a all event listeners for a given event
+ *
+ * @param {Object} source Object to remove listeners from
+ * @param {String} eventName Name of event to remove listeners from
+ */
+events.clearListeners = function (source, eventName) {
+    var listeners = getListeners(source, eventName),
+        eventID;
+
+
+    for (eventID in listeners) {
+        if (listeners.hasOwnProperty(eventID)) {
+            var l = listeners[eventID];
+            if (l) {
+                events.removeListener(l);
+            }
+        }
+    }
+};
+
+/**
+ * Remove all event listeners on an object
+ *
+ * @param {Object} source Object to remove listeners from
+ */
+events.clearInstanceListeners = function (source) {
+    var listeners = getListeners(source),
+        eventID;
+
+    for (var eventName in listeners) {
+        if (listeners.hasOwnProperty(eventName)) {
+            var el = listeners[eventName];
+            for (eventID in el) {
+                if (el.hasOwnProperty(eventID)) {
+                    var l = el[eventID];
+                    if (l) {
+                        events.removeListener(l);
+                    }
+                }
+            }
+        }
+    }
+};
+
+module.exports = events;
+
+}, mimetype: "application/javascript", remote: false}; // END: /__builtin__/events.js
+
+
+__jah__.resources["/__builtin__/path.js"] = {data: function (exports, require, module, __filename, __dirname) {
+/** @namespace */
+var path = {
+    /**
+     * Returns full directory path for the filename given. The path must be formed using forward slashes '/'.
+     *
+     * @param {String} path Path to return the directory name of
+     * @returns {String} Directory name
+     */
+    dirname: function(path) {
+        var tokens = path.split('/');
+        tokens.pop();
+        return tokens.join('/');
+    },
+
+    /**
+     * Returns just the filename portion of a path.
+     *
+     * @param {String} path Path to return the filename portion of
+     * @returns {String} Filename
+     */
+    basename: function(path) {
+        var tokens = path.split('/');
+        return tokens[tokens.length-1];
+    },
+
+    /**
+     * Joins multiple paths together to form a single path
+     * @param {String} ... Any number of string arguments to join together
+     * @returns {String} The joined path
+     */
+    join: function () {
+        return module.exports.normalize(Array.prototype.join.call(arguments, "/"));
+    },
+
+    /**
+     * Tests if a path exists
+     *
+     * @param {String} path Path to test
+     * @returns {Boolean} True if the path exists, false if not
+     */
+    exists: function(path) {
+        return (__jah__.resources[path] !== undefined);
+    },
+
+    /**
+     * @private
+     */
+    normalizeArray: function (parts, keepBlanks) {
+      var directories = [], prev;
+      for (var i = 0, l = parts.length - 1; i <= l; i++) {
+        var directory = parts[i];
+
+        // if it's blank, but it's not the first thing, and not the last thing, skip it.
+        if (directory === "" && i !== 0 && i !== l && !keepBlanks) continue;
+
+        // if it's a dot, and there was some previous dir already, then skip it.
+        if (directory === "." && prev !== undefined) continue;
+
+        // if it starts with "", and is a . or .., then skip it.
+        if (directories.length === 1 && directories[0] === "" && (
+            directory === "." || directory === "..")) continue;
+
+        if (
+          directory === ".."
+          && directories.length
+          && prev !== ".."
+          && prev !== "."
+          && prev !== undefined
+          && (prev !== "" || keepBlanks)
+        ) {
+          directories.pop();
+          prev = directories.slice(-1)[0]
+        } else {
+          if (prev === ".") directories.pop();
+          directories.push(directory);
+          prev = directory;
+        }
+      }
+      return directories;
+    },
+
+    /**
+     * Returns the real path by expanding any '.' and '..' portions
+     *
+     * @param {String} path Path to normalize
+     * @param {Boolean} [keepBlanks=false] Whether to keep blanks. i.e. double slashes in a path
+     * @returns {String} Normalized path
+     */
+    normalize: function (path, keepBlanks) {
+      return module.exports.normalizeArray(path.split("/"), keepBlanks).join("/");
+    }
+};
+
+module.exports = path;
+
+}, mimetype: "application/javascript", remote: false}; // END: /__builtin__/path.js
 
 /*globals module exports resource require window Module __main_module_name__ */
 /*jslint undef: true, strict: true, white: true, newcap: true, browser: true, indent: 4 */
