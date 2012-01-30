@@ -12,6 +12,10 @@ var cocos  = require('cocos2d')   // Import the cocos2d module
   , Background  = require('./Background').Background;
   
 var KEYS = {
+    w: 87,
+    a: 65,
+    s: 83,
+    d: 68,
     left: 37,
     up: 38,
     right: 39,
@@ -84,7 +88,7 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         this.addChild({child: background});
         this.set('background', background);
         
-        var player = Player.create();
+        var player = Player.create({});
         player.set('position', new geo.Point(160, 250));
         this.addChild({child: player});
         this.set('player', player);
@@ -181,17 +185,17 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         var player = this.get('player');
         var snake = this.get('snake');
         var pos = player.get('position');
-        
-        if (event.keyCode == KEYS.left) {
+        console.log(event.keyCode);
+        if (event.keyCode == KEYS.left || event.keyCode == KEYS.a) {
             player.setVelocity(new geo.Point(-1, 0));
         }
-        else if (event.keyCode == KEYS.up) {
+        else if (event.keyCode == KEYS.up || event.keyCode == KEYS.w) {
             player.setVelocity(new geo.Point(0, -1));
         }
-        else if (event.keyCode == KEYS.right) {
+        else if (event.keyCode == KEYS.right || event.keyCode == KEYS.d) {
             player.setVelocity(new geo.Point(1, 0));
         }
-        else if (event.keyCode == KEYS.down) {
+        else if (event.keyCode == KEYS.down || event.keyCode == KEYS.s) {
             player.setVelocity(new geo.Point(0, 1));
         }
         else if (event.keyCode == KEYS.esc) {

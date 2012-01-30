@@ -3,11 +3,14 @@ var geom = require('geometry');
 var util = require('util');
 var doublyLinkedList = require('./DoublyLinkedList');
 
+// Maximum size of the moves list.
 var MAX_MOVES = 3;
+
+var SNAKE_VELOCITY = 80;
 
 var Snake = cocos.nodes.Node.extend({
     initialVelocity: new geom.Point(-1, 0),
-    speed: 80,
+    speed: null,
     body: null,
     moves: null,
     head: null,
@@ -19,51 +22,16 @@ var Snake = cocos.nodes.Node.extend({
     init: function(opts) {
         Snake.superclass.init.call(this);
         this.parent = opts.parent;
+        this.speed = SNAKE_VELOCITY;
+        if (opts.velocity) {
+            this.speed = opts.velocity;
+        }
         var pos = new geom.Point(0, 0);
         if (opts.initialPos !== null) {
             pos = opts.initialPos;
         }
         
-        // We will add to parent to get initial
-        
         var moves = new doublyLinkedList.DoublyLinkedList()
-
-        // moves.add({
-        //     x: -48,
-        //     y: 0,
-        //     vX: 0,
-        //     vY: -1
-        // });
-        // moves.add({
-        //     x: -48,
-        //     y: -150,
-        //     vX: +1,
-        //     vY: 0
-        // });
-        // moves.add({
-        //     x: -10,
-        //     y: -150,
-        //     vX: 0,
-        //     vY: +1
-        // });
-        // moves.add({
-        //     x: -10,
-        //     y: -30,
-        //     vX: -1,
-        //     vY: 0
-        // });
-        // moves.add({
-        //     x: -40,
-        //     y: -30,
-        //     vX: 0,
-        //     vY: +1
-        // });
-        // moves.add({
-        //     x: -40,
-        //     y: 30,
-        //     vX: +1,
-        //     vY: 0
-        // });
         this.set('moves', moves);
 
         var body = new doublyLinkedList.DoublyLinkedList()
@@ -90,7 +58,7 @@ var Snake = cocos.nodes.Node.extend({
         d.getTime();
         this.set('startTime', d);
 
-        this.set('posToMove', new geom.Point(-48,0));
+        this.set('posToMove', new geom.Point(-100,0));
         var posToMove = this.get('posToMove');
         console.log(posToMove.x + " " + posToMove.y);
 
@@ -98,13 +66,13 @@ var Snake = cocos.nodes.Node.extend({
         
         this.schedule({
             method: this.trackPlayer,
-            interval: 1
+            interval: 0.5
         });
         
         this.scheduleUpdate();
     },
     
-    trackPlayer: function() {   
+    trackPlayer: function(dt) {   
         if (this.moves.size() == MAX_MOVES) {
             return;
         }
@@ -144,6 +112,19 @@ var Snake = cocos.nodes.Node.extend({
         console.log('adding move');
         console.log(move);
         this.moves.add(move);
+    },
+    
+    trackWinConditions: function() {
+        var body = this.get('body');
+        var headRect = body.item(0).get('boundingBox');
+        var bodyRect = null;
+        for (var i = 3; i < body.size(); i++) {
+            bodyRect = body.item(i).get('boundingBox');
+            if (geom.rectOverlapsRect(bodyRect, headRect)) {
+                this.get('parent').win();
+                break;
+            }
+        }
     },
     
     update: function(dt) {
@@ -223,6 +204,8 @@ var Snake = cocos.nodes.Node.extend({
         step += 1;
         this.set('step', step);
         //console.log("on step " + step);
+        
+        this.trackWinConditions();
     },
 
     // Check if val is between min and max

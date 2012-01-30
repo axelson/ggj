@@ -2,7 +2,7 @@ var cocos = require('cocos2d'),
     geom = require('geometry'),
     util = require('util');
 
-var PLAYER_SPEED = 100;
+var PLAYER_SPEED = 120;
 
 var circleOverlap = function(rect1, rect2) {
     // Get radiuses and approximate the center.
@@ -38,7 +38,7 @@ var Player = cocos.nodes.Node.extend({
     sprite: null,
     flipped: false,
     
-    init: function() {
+    init: function(opts) {
         Player.superclass.init.call(this);
 
         this.sprite = cocos.nodes.Sprite.create({
@@ -51,6 +51,9 @@ var Player = cocos.nodes.Node.extend({
         this.addChild({child: this.sprite});
         this.set('contentSize', this.sprite.get('contentSize'));
         this.set('velocity', new geom.Point(0, PLAYER_SPEED));
+        if (opts.velocity) {
+            this.set('velocity', opts.velocity);
+        }
         
         // Initialize death frames
         this.deathFrames = Array();
