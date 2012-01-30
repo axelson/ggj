@@ -26,6 +26,10 @@ var Food = cocos.nodes.Node.extend({
 
             if (geom.rectOverlapsRect(foodBox, playerBox)) {
                 this.get('parent').removeFood(this);
+                
+                console.log('pickup.play');
+                var snd = new Audio("/__jah__/resources/pickup.wav");
+                snd.play();
             }
         }
     }

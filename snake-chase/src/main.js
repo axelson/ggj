@@ -84,8 +84,10 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         this.addChild({child: player});
         this.set('player', player);
 
-        var snake = Snake.create();
-        snake.set('position', new geo.Point(280, 250));
+        var snake = Snake.create({
+            parent: this,
+            initialPos: new geo.Point(280, 250)
+        });
         this.addChild({child: snake});
         this.set('snake', snake);
         
@@ -94,7 +96,7 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
         for (var i=0; i<MAX_FOOD; i++) {
             this.food.push(Food.create());
         }
-        console.log(this.food);
+        // console.log(this.food);
         this.schedule({
             method: this.addFood,
             interval: 3
@@ -215,6 +217,11 @@ var SnakeChase = cocos.nodes.Layer.extend(/** @lends Snake-chase# */{
             lives: this.lives.length
         });
         scene.addChild({child: next});
+        
+        console.log('levelup.play');
+        var snd = new Audio("/__jah__/resources/levelup.wav");
+        snd.play();
+        
         director.replaceScene(scene);
     }
 });
@@ -252,6 +259,8 @@ var Menu = cocos.nodes.Layer.extend({
         var scene = cocos.nodes.Scene.create();
         scene.addChild({child: SnakeChase.create({level: 1, points: 0, lives: 3})});
         director.replaceScene(scene);
+        $('#title').show();
+        $('#audio_control').show();
     }
 });
 

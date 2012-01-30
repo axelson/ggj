@@ -3,19 +3,26 @@
     <head> 
         <meta http-equiv="Content-Type" content="text/html; charset=utf-8"> 
         <title>Snake Chase</title> 
-        <script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.7.1/jquery.min.js"></script>
+        <script type="text/javascript" src="/__jah__/jquery.min.js"></script>
+
         <style type="text/css" media="screen"> 
             body {
                 font-family: Helvetica, Arial, sans-serif;
-                font-size: 10pt;
+                font-size: 14pt;
                 background: #ddd;
             }
             h1 {
                 text-align: center;
                 text-shadow: 0 2px 1px #fff;
             }
+            #audio_control {
+                margin: 0 auto;
+                width: 720px;
+                text-shadow: 0 2px 1px #fff;
+            }
+            
             #snake_chase_app {
-                border: 1px solid #000;
+                border: 10px solid #000;
                 width: 720px;
                 height: 540px;
                 margin: 0 auto;
@@ -28,12 +35,17 @@
         ${scripts}
     </head> 
     <body> 
-       <audio autoplay="autoplay">
-            <source src="assets/resources/snake-chase-bg.mp3" type="audio/mp3" />
+       <div id="title" style="display: none" > <h1> Snake Chase </h1> </div>
+       <div id="snake_chase_app">Snake Chase is loading...</div>
+       <div id="audio_control" style="display: none"> 
+       <b>Use ARROW KEY to move the Turtle</b>
+       <span style="float:right"> 
+       <audio id="audio-bg" autoplay controls loop="loop">
+            <source src="/__jah__/resources/snake-chase-bg.wav" type="audio/wav" />
+            <source src="/__jah__/resources/snake-chase-bg.mp3" type="audio/mp3" />
             Your browser does not support the audio tag.
        </audio>
-       
-       <div id="snake_chase_app">Snake Chase is loading...</div>
-       
+        </span>
+       </div>
     </body>
 </html>

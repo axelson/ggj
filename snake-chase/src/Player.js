@@ -21,6 +21,8 @@ var circleOverlap = function(rect1, rect2) {
     var dy = pos1.y - pos2.y;
     var distance = Math.sqrt(dx * dx + dy * dy);
     
+    // console.log(pos1);
+    // console.log(pos2);
     if (distance < rad1 + rad2) {
         // We have overlap
         return true;
@@ -112,7 +114,7 @@ var Player = cocos.nodes.Node.extend({
         this.removeChild({child: this.sprite});
         
         this.sprite = cocos.nodes.Sprite.create({
-            file: '/resources/turtle.png',
+            file: '/resources/turtle.png'
             //rect: new geom.Rect(80, 0, 16, 16)
         });
 
@@ -124,15 +126,38 @@ var Player = cocos.nodes.Node.extend({
     testDeathConditions: function() {
         var vel = util.copy(this.get('velocity')),
             playerBox = this.get('boundingBox'),
-            snakeBox = this.get('parent').get('snake').get('boundingBox');
-
-        if (geom.rectOverlapsRect(snakeBox, playerBox)) {
-            if (circleOverlap(snakeBox, playerBox) && !this.dying) {
+            snakeBody = this.get('parent').get('snake').get('body'),
+            snakePos = this.get('parent').get('snake').get('position');
+            
+        var i = 0;
+        var segment = snakeBody.item(i);
+        var segmentBox = null;
+        // console.log(snakePos);
+        while(segment !== null) {
+            segmentBox = segment.get('boundingBox');
+            if (circleOverlap(segmentBox, playerBox) && !this.dying) {
+                console.log('die');
                 this.die();
+                break;
             }
+            
+            i += 1;
+            segment = snakeBody.item(i);
         }
 	},
 	
+	playStopEffect: function() {
+	    console.log('stop.play');
+        var snd = new Audio("/__jah__/resources/stop.wav");
+        snd.play();
+    },
+
+	playDeadEffect: function() {
+	    console.log('dead.play');
+        var snd = new Audio("/__jah__/resources/dead.wav");
+        snd.play();
+    },
+                  
 	die: function() {
 	    this.setVelocity(new geom.Point(0, 0));
         this.dying = true;
@@ -155,6 +180,8 @@ var Player = cocos.nodes.Node.extend({
             this.layer.removeLife();
         }
         this.sprite.runAction(animate);
+        
+        this.playDeadEffect();
 	},
 	
 	testBounds: function() {
@@ -165,21 +192,34 @@ var Player = cocos.nodes.Node.extend({
             if (vel.x < 0 && geom.rectGetMinX(box) < 0) {
                 //Flip X velocity
                 vel.x = 0;
+                if (vel.x == 0 && vel.y == 0) {
+                  this.playStopEffect();
+                }
             }
 
             if (vel.x > 0 && geom.rectGetMaxX(box) > winSize.width) {
                 vel.x = 0;
+                if (vel.x == 0 && vel.y == 0) {
+                  this.playStopEffect();
+                }                
             }
 
             if (vel.y < 0 && geom.rectGetMinY(box) < 0) {
                 vel.y *= 0;
+                if (vel.x == 0 && vel.y == 0) {
+                  this.playStopEffect();
+                }
             }
 
             if (vel.y > 0 && geom.rectGetMaxY(box) > winSize.height) {
                 vel.y *= 0;
+                if (vel.x == 0 && vel.y == 0) {
+                  this.playStopEffect();
+                }
             }
 
             this.set('velocity', vel);
+            
         }
 });
 
