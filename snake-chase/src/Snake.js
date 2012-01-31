@@ -30,7 +30,7 @@ var Snake = cocos.nodes.Node.extend({
         if (opts.initialPos !== null) {
             pos = opts.initialPos;
         }
-        
+
         var moves = new doublyLinkedList.DoublyLinkedList()
         this.set('moves', moves);
 
@@ -40,7 +40,7 @@ var Snake = cocos.nodes.Node.extend({
             //rect: new geom.Rect(96, 0, 16, 16)
         });
         sprite2.set('position', pos);
-        
+
         sprite2.set('velocity', util.copy(this.get('initialVelocity')));
         body.add(sprite2);
         this.parent.addChild({child: body.item(0)});
@@ -66,16 +66,16 @@ var Snake = cocos.nodes.Node.extend({
         console.log(posToMove.x + " " + posToMove.y);
 
         //this.set('step', 0);
-        
+
         this.schedule({
             method: this.trackPlayer,
             interval: 0.5
         });
-        
+
         this.scheduleUpdate();
     },
-    
-    trackPlayer: function(dt) {   
+
+    trackPlayer: function(dt) {
         var numMoves = 0;
         for(var j=0; j<this.moves.size() ;j++) {
             var move = this.moves.item(j);
@@ -86,12 +86,12 @@ var Snake = cocos.nodes.Node.extend({
         if (numMoves >= MAX_MOVES) {
             return;
         }
-        
+
         // Find the player.
         var head = this.body.item(0);
         var myPos = this.body.item(0).get('position');
         var playerPos = this.get('parent').get('player').get('position');
-        
+
         var dx = myPos.x - playerPos.x;
         var dy = myPos.y - playerPos.y;
         var myVel = head.get('velocity');
@@ -103,7 +103,7 @@ var Snake = cocos.nodes.Node.extend({
             vY: 0,
             sprite: null
         }
-        
+
         console.log(myVel.x);
         if (myVel.x == 0) {
             if (dx > 0) {
@@ -133,7 +133,7 @@ var Snake = cocos.nodes.Node.extend({
         move.sprite = sprite;
         this.moves.add(move);
     },
-    
+
     trackWinConditions: function() {
         var body = this.get('body');
         var headRect = body.item(0).get('boundingBox');
@@ -146,7 +146,7 @@ var Snake = cocos.nodes.Node.extend({
             }
         }
     },
-    
+
     update: function(dt) {
         //var pos = util.copy(this.get('position'));
         var body = this.get('body');
@@ -265,7 +265,7 @@ var Snake = cocos.nodes.Node.extend({
         step += 1;
         this.set('step', step);
         //console.log("on step " + step);
-        
+
         this.trackWinConditions();
     },
 
